@@ -1,0 +1,7 @@
+/build
+/mihomo-tui
+/.vscode
+/idea
+*.log
+/AGENTS.md
+/main

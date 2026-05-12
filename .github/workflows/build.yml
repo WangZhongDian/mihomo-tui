@@ -1,0 +1,62 @@
+name: Build
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build-linux:
+    name: Build Linux (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            goarch: amd64
+          - arch: arm64
+            goarch: arm64
+          - arch: armv7
+            goarch: arm
+            goarm: 7
+          - arch: 386
+            goarch: 386
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build binary
+        env:
+          CGO_ENABLED: 0
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+        run: |
+          output="mihomo-tui-linux-${{ matrix.arch }}"
+          go build -ldflags="-s -w" -o "$output" .
+          echo "Built: $output"
+          file "$output"
+
+      - name: Upload artifact
+        uses: actions/gitea-upload-artifact@v4
+        with:
+          name: mihomo-tui-linux-${{ matrix.arch }}
+          path: mihomo-tui-linux-${{ matrix.arch }}
+          retention-days: 7
+
+      - name: Upload release asset
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: mihomo-tui-linux-${{ matrix.arch }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
