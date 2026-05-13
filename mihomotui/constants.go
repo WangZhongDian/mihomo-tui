@@ -13,8 +13,8 @@ const (
 
 // 文件与目录名
 const (
-	ConfigDirName   = "mihomo-tui"
-	ConfigFileName  = "config.yaml"
+	ConfigDirName    = "mihomo-tui"
+	ConfigFileName   = "config.yaml"
 	MihomoConfigName = "config.yaml"
 	SubscriptionsDir = "subscriptions"
 )
@@ -34,7 +34,7 @@ const (
 
 // Socket 路径
 const (
-	SocketDir  = "/tmp/mihomo-tui"
+	SocketDir  = "/var/run/mihomo-tui"
 	SocketFile = "daemon.sock"
 )
 
@@ -45,9 +45,9 @@ const (
 
 // 延迟状态常量
 const (
-	DelayUntested  = -3 // 未测试
-	DelayTesting   = -2 // 测试中
-	DelayTimeout   = -1 // 超时/失败
+	DelayUntested = -3 // 未测试
+	DelayTesting  = -2 // 测试中
+	DelayTimeout  = -1 // 超时/失败
 )
 
 // 颜色常量（tview 动态颜色标签）

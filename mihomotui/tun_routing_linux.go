@@ -16,8 +16,8 @@ func getDefaultGateway() (iface, gateway string, err error) {
 	if err != nil {
 		return "", "", fmt.Errorf("获取默认路由失败: %w, output: %s", err, string(out))
 	}
-	lines := strings.Split(string(out), "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(string(out), "\n")
+	for line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue

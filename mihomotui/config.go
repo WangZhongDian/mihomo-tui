@@ -81,6 +81,7 @@ type Config struct {
 	Subscriptions             []SubscriptionMeta         `yaml:"subscriptions"`
 	ActiveSubscription        int                        `yaml:"active_subscription"`
 	RuleProviderSubscriptions []RuleProviderSubscription `yaml:"rule_provider_subscriptions"`
+	CustomRules               []string                   `yaml:"custom_rules"`
 	ExternalResources         ExternalResources          `yaml:"external_resources"`
 	ProxyMode                 string                     `yaml:"proxy_mode"`
 	LogDir                    string                     `yaml:"log_dir"`

@@ -206,8 +206,8 @@ func NewDashboard(app *tview.Application) (Page, func()) {
 			if line == "" {
 				continue
 			}
-			if strings.HasPrefix(line, "data:") {
-				line = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			if after, ok := strings.CutPrefix(line, "data:"); ok {
+				line = strings.TrimSpace(after)
 			}
 			if line == "" {
 				continue

@@ -391,6 +391,8 @@ func (c *Config) buildRuleConfig() (map[string]ruleProviderYAML, []string, error
 	case "direct":
 		rules = append(rules, "MATCH,DIRECT")
 	case "rule":
+		// 用户自定义规则优先级最高，插入在最前面
+		rules = append(rules, c.CustomRules...)
 		// SSH 流量必须直连，防止 TUN 劫持后误走代理导致远程服务器 SSH 卡顿/断开
 		rules = append(rules, "DST-PORT,22,DIRECT")
 		for name := range ruleProviders {

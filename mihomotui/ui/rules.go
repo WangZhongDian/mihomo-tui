@@ -15,7 +15,7 @@ func NewRulesPage(app *tview.Application) tview.Primitive {
 	pages := tview.NewPages()
 	pages.Focus(func(p tview.Primitive) { app.SetFocus(p) })
 
-	activeTab := 0 // 0 = 规则列表, 1 = 规则订阅
+	activeTab := 0 // 0 = 规则列表, 1 = 规则订阅, 2 = 自定义规则
 
 	// ===== 规则列表页面 =====
 	rulesListPage := newRulesListPage(app, pages)
@@ -23,22 +23,32 @@ func NewRulesPage(app *tview.Application) tview.Primitive {
 	// ===== 规则订阅页面 =====
 	ruleProviderPage := newRuleProviderPage(app, pages)
 
+	// ===== 自定义规则页面 =====
+	customRulesPage := newCustomRulesPage(app, pages)
+
 	pages.AddPage("rules_list", rulesListPage, true, true)
 	pages.AddPage("rule_providers", ruleProviderPage, true, false)
+	pages.AddPage("custom_rules", customRulesPage, true, false)
 
-	// ===== Tab 栏（两个 Button 水平排列）=====
+	// ===== Tab 栏（三个 Button 水平排列）=====
 	tab1Btn := tview.NewButton(" 规则列表 ")
 	tab1Btn.SetBorder(false)
 	tab2Btn := tview.NewButton(" 规则订阅 ")
 	tab2Btn.SetBorder(false)
+	tab3Btn := tview.NewButton(" 自定义规则 ")
+	tab3Btn.SetBorder(false)
 
 	updateTabHighlight := func() {
-		if activeTab == 0 {
+		tab1Btn.SetLabel(" 规则列表 ")
+		tab2Btn.SetLabel(" 规则订阅 ")
+		tab3Btn.SetLabel(" 自定义规则 ")
+		switch activeTab {
+		case 0:
 			tab1Btn.SetLabel("[规则列表]")
-			tab2Btn.SetLabel(" 规则订阅 ")
-		} else {
-			tab1Btn.SetLabel(" 规则列表 ")
+		case 1:
 			tab2Btn.SetLabel("[规则订阅]")
+		case 2:
+			tab3Btn.SetLabel("[自定义规则]")
 		}
 	}
 	updateTabHighlight()
@@ -49,21 +59,27 @@ func NewRulesPage(app *tview.Application) tview.Primitive {
 		}
 		activeTab = tab
 		updateTabHighlight()
-		if activeTab == 0 {
+		switch activeTab {
+		case 0:
 			pages.SwitchToPage("rules_list")
 			app.SetFocus(rulesListPage)
-		} else {
+		case 1:
 			pages.SwitchToPage("rule_providers")
 			app.SetFocus(ruleProviderPage)
+		case 2:
+			pages.SwitchToPage("custom_rules")
+			app.SetFocus(customRulesPage)
 		}
 	}
 
 	tab1Btn.SetSelectedFunc(func() { switchToTab(0) })
 	tab2Btn.SetSelectedFunc(func() { switchToTab(1) })
+	tab3Btn.SetSelectedFunc(func() { switchToTab(2) })
 
 	tabBar := tview.NewFlex().
 		AddItem(tab1Btn, 0, 1, true).
-		AddItem(tab2Btn, 0, 1, true)
+		AddItem(tab2Btn, 0, 1, true).
+		AddItem(tab3Btn, 0, 1, true)
 
 	// 主布局
 	mainLayout := tview.NewFlex().SetDirection(tview.FlexRow).
@@ -610,5 +626,176 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 	})
 
 	refreshCards()
+	return page
+}
+
+// newCustomRulesPage 创建自定义规则管理页面
+func newCustomRulesPage(app *tview.Application, pages *tview.Pages) tview.Primitive {
+	cfg := mihomotui.GlobalConfig()
+
+	knownPolicies := []string{"Auto", "DIRECT", "REJECT", "Manual", "Fallback"}
+	hasPolicy := func(rule string) bool {
+		lastComma := strings.LastIndex(rule, ",")
+		if lastComma < 0 {
+			return false
+		}
+		suffix := strings.TrimSpace(rule[lastComma+1:])
+		for _, p := range knownPolicies {
+			if suffix == p {
+				return true
+			}
+		}
+		return false
+	}
+
+	ruleInput := tview.NewInputField().
+		SetPlaceholder(" DOMAIN,google.com 或 IP-CIDR,1.1.1.1/32,no-resolve").
+		SetFieldBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
+	ruleInput.SetBorder(true).SetTitle(" 规则 ")
+
+	policyDropdown := tview.NewDropDown().
+		SetOptions(knownPolicies, nil).
+		SetCurrentOption(0)
+	policyDropdown.SetBorder(true).SetTitle(" 策略 ")
+
+	addBtn := tview.NewButton(" 添加 ")
+	addBtn.SetBorder(false)
+
+	toolbar := tview.NewFlex().
+		AddItem(ruleInput, 0, 3, true).
+		AddItem(policyDropdown, 14, 0, false).
+		AddItem(addBtn, 10, 0, false)
+
+	listFlex := tview.NewFlex().SetDirection(tview.FlexRow)
+	statusBar := tview.NewTextView().
+		SetDynamicColors(true).
+		SetText("")
+
+	refreshList := func() {}
+
+	deleteRule := func(idx int) {
+		if idx < 0 || idx >= len(cfg.CustomRules) {
+			return
+		}
+		go func() {
+			client, err := mihomotui.GetIPCClient()
+			if err != nil {
+				app.QueueUpdateDraw(func() {
+					ShowAlertModal(app, pages, "删除失败", err.Error())
+				})
+				return
+			}
+			cfg.CustomRules = append(cfg.CustomRules[:idx], cfg.CustomRules[idx+1:]...)
+			if err := cfg.Flush(); err != nil {
+				app.QueueUpdateDraw(func() {
+					ShowAlertModal(app, pages, "保存失败", err.Error())
+				})
+				return
+			}
+			if err := client.IPCUpdateConfig(cfg); err != nil {
+				app.QueueUpdateDraw(func() {
+					ShowAlertModal(app, pages, "同步失败", err.Error())
+				})
+				return
+			}
+			cfg2, _ := client.IPCGetConfig()
+			app.QueueUpdateDraw(func() {
+				if cfg2 != nil {
+					mihomotui.SetGlobalConfig(*cfg2)
+				}
+				refreshList()
+			})
+		}()
+	}
+
+	refreshList = func() {
+		listFlex.Clear()
+		for i, rule := range cfg.CustomRules {
+			idx := i
+			r := rule
+			info := tview.NewTextView().
+				SetText(fmt.Sprintf(" %d. %s", i+1, r)).
+				SetDynamicColors(true)
+			deleteBtn := tview.NewButton(" ✕ ")
+			deleteBtn.SetBorder(false)
+			deleteBtn.SetSelectedFunc(func() {
+				ShowConfirmModal(app, pages, "确认删除", fmt.Sprintf("删除规则: %s", r), func() {
+					deleteRule(idx)
+				})
+			})
+			row := tview.NewFlex().
+				AddItem(info, 0, 1, false).
+				AddItem(deleteBtn, 4, 0, true)
+			row.SetBorder(false)
+			listFlex.AddItem(row, 1, 0, false)
+		}
+		if len(cfg.CustomRules) == 0 {
+			empty := tview.NewTextView().
+				SetTextAlign(tview.AlignCenter).
+				SetText("\n暂无自定义规则")
+			listFlex.AddItem(empty, 0, 1, false)
+		}
+		statusBar.SetText(fmt.Sprintf(" 共%d条 ", len(cfg.CustomRules)))
+	}
+
+	addBtn.SetSelectedFunc(func() {
+		rule := strings.TrimSpace(ruleInput.GetText())
+		if rule == "" {
+			ShowAlertModal(app, pages, "添加失败", "请输入规则内容")
+			return
+		}
+		// 如果规则缺少策略，自动追加选择的策略
+		if !hasPolicy(rule) {
+			_, policy := policyDropdown.GetCurrentOption()
+			if policy != "" {
+				rule = rule + "," + policy
+			}
+		}
+		// 去重检查
+		for _, r := range cfg.CustomRules {
+			if r == rule {
+				ShowAlertModal(app, pages, "添加失败", "该规则已存在")
+				return
+			}
+		}
+		go func() {
+			client, err := mihomotui.GetIPCClient()
+			if err != nil {
+				app.QueueUpdateDraw(func() {
+					ShowAlertModal(app, pages, "添加失败", err.Error())
+				})
+				return
+			}
+			cfg.CustomRules = append(cfg.CustomRules, rule)
+			if err := cfg.Flush(); err != nil {
+				app.QueueUpdateDraw(func() {
+					ShowAlertModal(app, pages, "保存失败", err.Error())
+				})
+				return
+			}
+			if err := client.IPCUpdateConfig(cfg); err != nil {
+				app.QueueUpdateDraw(func() {
+					ShowAlertModal(app, pages, "同步失败", err.Error())
+				})
+				return
+			}
+			cfg2, _ := client.IPCGetConfig()
+			app.QueueUpdateDraw(func() {
+				if cfg2 != nil {
+					mihomotui.SetGlobalConfig(*cfg2)
+				}
+				ruleInput.SetText("")
+				refreshList()
+				ShowAlertModal(app, pages, "添加成功", fmt.Sprintf("规则: %s", rule))
+			})
+		}()
+	})
+
+	page := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(toolbar, 3, 0, false).
+		AddItem(listFlex, 0, 1, false).
+		AddItem(statusBar, 1, 0, false)
+
+	refreshList()
 	return page
 }
