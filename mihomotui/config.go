@@ -26,7 +26,6 @@ type SystemConfig struct {
 	SystemProxy bool   `yaml:"system_proxy"`
 	TUN         bool   `yaml:"tun"`
 	Language    string `yaml:"language"`
-	ProxyPort   int    `yaml:"proxy_port"`
 }
 
 // MihomoConfig mihomo 内核设置
@@ -75,17 +74,17 @@ type RuleProviderSubscription struct {
 
 // Config 全局配置
 type Config struct {
-	MihomoConfigPath   string             `yaml:"mihomo_config_path"`
-	MihomoBinaryPath   string             `yaml:"mihomo_binary_path"`
-	System             SystemConfig       `yaml:"system"`
-	Mihomo             MihomoConfig       `yaml:"mihomo"`
+	MihomoConfigPath          string                     `yaml:"mihomo_config_path"`
+	MihomoBinaryPath          string                     `yaml:"mihomo_binary_path"`
+	System                    SystemConfig               `yaml:"system"`
+	Mihomo                    MihomoConfig               `yaml:"mihomo"`
 	Subscriptions             []SubscriptionMeta         `yaml:"subscriptions"`
 	ActiveSubscription        int                        `yaml:"active_subscription"`
 	RuleProviderSubscriptions []RuleProviderSubscription `yaml:"rule_provider_subscriptions"`
 	ExternalResources         ExternalResources          `yaml:"external_resources"`
-	ProxyMode          string             `yaml:"proxy_mode"`
-	LogDir             string             `yaml:"log_dir"`
-	LogLevel           string             `yaml:"log_level"`
+	ProxyMode                 string                     `yaml:"proxy_mode"`
+	LogDir                    string                     `yaml:"log_dir"`
+	LogLevel                  string                     `yaml:"log_level"`
 }
 
 // 下载 URL 常量已迁移至 constants.go，保留别名避免编译中断
@@ -162,7 +161,6 @@ func defaultConfig() Config {
 			SystemProxy: true,
 			TUN:         false,
 			Language:    "zh-CN",
-			ProxyPort:   7890,
 		},
 		Mihomo: MihomoConfig{
 			HTTPPort:           7890,

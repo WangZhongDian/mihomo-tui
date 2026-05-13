@@ -28,7 +28,7 @@ func (c *Config) SetSystemProxyEnv(enabled bool) error {
 	// 构建代理地址
 	httpPort := c.Mihomo.MixedPort
 	if httpPort <= 0 {
-		httpPort = c.System.ProxyPort
+		httpPort = c.Mihomo.HTTPPort
 	}
 	if httpPort <= 0 {
 		httpPort = 7892
