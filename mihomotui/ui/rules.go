@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -297,7 +298,7 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 	behaviorDropdown.SetBorder(true).SetTitle(" 类型 ")
 
 	proxyGroupDropdown := tview.NewDropDown().
-		SetOptions([]string{"Auto", "DIRECT", "REJECT"}, nil).
+		SetOptions(mihomotui.PolicyList, nil).
 		SetCurrentOption(0)
 	proxyGroupDropdown.SetBorder(true).SetTitle(" 策略 ")
 
@@ -633,19 +634,14 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 func newCustomRulesPage(app *tview.Application, pages *tview.Pages) tview.Primitive {
 	cfg := mihomotui.GlobalConfig()
 
-	knownPolicies := []string{"Auto", "DIRECT", "REJECT", "Manual", "Fallback"}
+	knownPolicies := mihomotui.PolicyList
 	hasPolicy := func(rule string) bool {
 		lastComma := strings.LastIndex(rule, ",")
 		if lastComma < 0 {
 			return false
 		}
 		suffix := strings.TrimSpace(rule[lastComma+1:])
-		for _, p := range knownPolicies {
-			if suffix == p {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(knownPolicies, suffix)
 	}
 
 	ruleInput := tview.NewInputField().
@@ -752,11 +748,9 @@ func newCustomRulesPage(app *tview.Application, pages *tview.Pages) tview.Primit
 			}
 		}
 		// 去重检查
-		for _, r := range cfg.CustomRules {
-			if r == rule {
-				ShowAlertModal(app, pages, "添加失败", "该规则已存在")
-				return
-			}
+		if slices.Contains(cfg.CustomRules, rule) {
+			ShowAlertModal(app, pages, "添加失败", "该规则已存在")
+			return
 		}
 		go func() {
 			client, err := mihomotui.GetIPCClient()

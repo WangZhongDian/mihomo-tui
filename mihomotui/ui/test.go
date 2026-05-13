@@ -10,6 +10,7 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+	"mihomotui/mihomotui"
 )
 
 // TestItem 解锁测试项
@@ -285,7 +286,8 @@ func createTestCard(item *TestItem, selected bool, onTest func()) tview.Primitiv
 	text := fmt.Sprintf(
 		" [::b]%s[-:-:-]\n"+
 			" [%s]● %s[-]%s\n"+
-			" ['+mihomotui.ColorMuted+']%s[-]",
+			" [%s]%s[-]",
+		mihomotui.ColorMuted,
 		item.Name,
 		statusColor, item.Status, regionTag,
 		item.Updated,

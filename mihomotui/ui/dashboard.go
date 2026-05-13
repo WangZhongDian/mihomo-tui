@@ -74,7 +74,7 @@ func NewDashboard(app *tview.Application) (Page, func()) {
 			}
 
 			var group *mihomotui.ProxyGroup
-			for _, name := range []string{"Global", "Auto", "Manual"} {
+			for _, name := range []string{"GLOBAL", "Auto", "Manual"} {
 				for i := range groups {
 					if groups[i].Name == name {
 						group = &groups[i]

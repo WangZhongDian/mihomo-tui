@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -149,6 +150,7 @@ type mihomoConfigYAML struct {
 	Rules              []string                     `yaml:"rules"`
 }
 
+// 其中Atuo作为代理策略的占位符，后续会根据选择的默认代理策略进行替换
 var DEFAULT_RULES = []string{
 	"GEOIP,CN,DIRECT",
 	"DOMAIN-KEYWORD,-cn,DIRECT",
@@ -169,6 +171,7 @@ var DEFAULT_RULES = []string{
 	"DOMAIN-SUFFIX,facebook.com,Auto",
 }
 
+// 其中Atuo作为代理策略的占位符，后续会根据选择的默认代理策略进行替换
 var builtInRulesProviders = map[string]ruleProviderYAML{
 	"reject": {
 		Type:       "http",
@@ -329,14 +332,30 @@ func (c *Config) buildProxyConfig() (map[string]proxyProviderYAML, []proxyYAML, 
 			Proxies: []string{"DIRECT"},
 		},
 		{
-			Name: "Fallback",
-			Type: "fallback",
-			Use:  providerNames,
-			URL:  "http://www.gstatic.com/generate_204",
+			Name:     "Fallback",
+			Type:     "fallback",
+			Use:      providerNames,
+			URL:      "http://www.gstatic.com/generate_204",
+			Interval: HealthCheckInterval,
+		},
+		{
+			Name:     "Load-Balance",
+			Type:     "load-balance",
+			Use:      providerNames,
+			URL:      "http://www.gstatic.com/generate_204",
+			Interval: HealthCheckInterval,
 		},
 	}
 
 	return proxyProviders, proxies, proxyGroups, nil
+}
+
+// defaultProxyGroup 返回用户配置的默认代理策略，未设置则返回 Auto
+func (c *Config) defaultProxyGroup() string {
+	if c.DefaultProxyGroup != "" {
+		return c.DefaultProxyGroup
+	}
+	return "Auto"
 }
 
 // buildRuleConfig 构建规则相关配置（rule-providers、rules）
@@ -358,7 +377,7 @@ func (c *Config) buildRuleConfig() (map[string]ruleProviderYAML, []string, error
 		}
 		proxyGroup := rp.ProxyGroup
 		if proxyGroup == "" {
-			proxyGroup = "Auto"
+			proxyGroup = c.defaultProxyGroup()
 		}
 		sanitized := SanitizeFileName(rp.Name)
 		ext := format
@@ -387,7 +406,7 @@ func (c *Config) buildRuleConfig() (map[string]ruleProviderYAML, []string, error
 
 	switch c.ProxyMode {
 	case "global":
-		rules = append(rules, "MATCH,Auto")
+		rules = append(rules, "MATCH,"+c.defaultProxyGroup())
 	case "direct":
 		rules = append(rules, "MATCH,DIRECT")
 	case "rule":
@@ -398,7 +417,7 @@ func (c *Config) buildRuleConfig() (map[string]ruleProviderYAML, []string, error
 		for name := range ruleProviders {
 			pg := rpProxyGroups[name]
 			if pg == "" {
-				pg = "Auto"
+				pg = c.defaultProxyGroup()
 			}
 			rules = append(rules, fmt.Sprintf("RULE-SET,%s,%s", name, pg))
 		}
@@ -407,11 +426,22 @@ func (c *Config) buildRuleConfig() (map[string]ruleProviderYAML, []string, error
 		for name, rp := range builtInRulesProviders {
 			if _, exists := ruleProviders[name]; !exists {
 				ruleProviders[name] = rp
-				rules = append(rules, fmt.Sprintf("RULE-SET,%s,%s", name, rp.ProxyGroup))
+				pg := rp.ProxyGroup
+				if pg == "Auto" {
+					pg = c.defaultProxyGroup()
+				}
+				rules = append(rules, fmt.Sprintf("RULE-SET,%s,%s", name, pg))
 			}
 		}
-		rules = append(rules, DEFAULT_RULES...)
-		rules = append(rules, "MATCH,Auto")
+		// 加载默认规则，将写死的 Auto 替换为用户配置的默认策略
+		for _, rule := range DEFAULT_RULES {
+			if before, ok0 := strings.CutSuffix(rule, ",Auto"); ok0 {
+				rules = append(rules, before+","+c.defaultProxyGroup())
+			} else {
+				rules = append(rules, rule)
+			}
+		}
+		rules = append(rules, "MATCH,"+c.defaultProxyGroup())
 	}
 	return ruleProviders, rules, nil
 }

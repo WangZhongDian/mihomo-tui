@@ -84,6 +84,7 @@ type Config struct {
 	CustomRules               []string                   `yaml:"custom_rules"`
 	ExternalResources         ExternalResources          `yaml:"external_resources"`
 	ProxyMode                 string                     `yaml:"proxy_mode"`
+	DefaultProxyGroup         string                     `yaml:"default_proxy_group"`
 	LogDir                    string                     `yaml:"log_dir"`
 	LogLevel                  string                     `yaml:"log_level"`
 }
@@ -184,9 +185,10 @@ func defaultConfig() Config {
 			GeoSite: DEFAULT_GEOSITE_DOWNLOAD_URL,
 			Mihomo:  DEFAULT_MIHOMO_DOWNLOAD_URL,
 		},
-		ProxyMode: "rule",
-		LogDir:    filepath.Join(GetConfigDir(), "logs"),
-		LogLevel:  "info",
+		ProxyMode:         "rule",
+		DefaultProxyGroup: "Auto",
+		LogDir:            filepath.Join(GetConfigDir(), "logs"),
+		LogLevel:          "info",
 	}
 }
 

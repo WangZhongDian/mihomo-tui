@@ -48,9 +48,9 @@ type DaemonInfo struct {
 
 // UpgradeProgress mihomo 内核升级进度
 type UpgradeProgress struct {
-	Status  string `json:"status"`   // idle / downloading / extracting / done / error
-	Percent int    `json:"percent"`  // 0-100
-	Message string `json:"message"`  // 状态描述
+	Status  string `json:"status"`  // idle / downloading / extracting / done / error
+	Percent int    `json:"percent"` // 0-100
+	Message string `json:"message"` // 状态描述
 }
 
 // RuleProviderImportRequest 导入规则订阅请求

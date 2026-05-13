@@ -208,8 +208,8 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 			infoText := fmt.Sprintf(
 				"[blue::b] %s[-:-:-]    %.2fGB / %.2fGB\n"+
 					" 来源: %s    更新: %s    %.0f%%\n"+
-					" ['+mihomotui.ColorInfo+']%s[-]",
-				sub.Name, sub.UsedGB, sub.TotalGB, sub.URL, sub.UpdatedAt, percent, bar,
+					" [%s]%s[-]",
+				sub.Name, sub.UsedGB, sub.TotalGB, sub.URL, sub.UpdatedAt, percent, mihomotui.ColorInfo, bar,
 			)
 			info := tview.NewTextView().SetText(infoText).SetDynamicColors(true)
 

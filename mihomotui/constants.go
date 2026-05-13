@@ -60,6 +60,11 @@ const (
 	ColorHeader = "blue::b"
 )
 
+// 可选的策略规则列表
+var (
+	PolicyList = []string{"Auto", "DIRECT", "REJECT", "Manual", "Fallback", "Load-Balance"}
+)
+
 // 下载 URL
 const (
 	DefaultMihomoDownloadURL  = "https://github.com/MetaCubeX/mihomo/latest/download/"
