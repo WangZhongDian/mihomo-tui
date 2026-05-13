@@ -133,11 +133,6 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 			}
 			doSave("语言")
 		}).
-		AddInputField("代理端口", strconv.Itoa(cfg.System.ProxyPort), 10, nil, func(text string) {
-			if v, err := strconv.Atoi(text); err == nil {
-				cfg.System.ProxyPort = v
-			}
-		}).
 		AddDropDown("应用日志级别", []string{"DEBUG", "INFO", "WARN", "ERROR"}, appLogIdx, func(option string, optionIndex int) {
 			cfg.LogLevel = appLogLevels[optionIndex]
 			doSave("应用日志级别")

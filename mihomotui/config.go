@@ -46,7 +46,6 @@ type MihomoConfig struct {
 
 // ExternalResources 外部资源下载设置
 type ExternalResources struct {
-	Mode    string `yaml:"mode"` // auto, manual
 	GeoIP   string `yaml:"geoip"`
 	GeoSite string `yaml:"geosite"`
 	Mihomo  string `yaml:"mihomo"`
@@ -165,7 +164,6 @@ func defaultConfig() Config {
 		Subscriptions:      []SubscriptionMeta{},
 		ActiveSubscription: -1,
 		ExternalResources: ExternalResources{
-			Mode:    "auto",
 			GeoIP:   DEFAULT_GEOIP_DOWNLOAD_URL,
 			GeoSite: DEFAULT_GEOSITE_DOWNLOAD_URL,
 			Mihomo:  DEFAULT_MIHOMO_DOWNLOAD_URL,
