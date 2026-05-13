@@ -241,36 +241,36 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 	refreshVersionCard := func() {
 		var infoText string
 		if currentVersion == "" {
-			infoText = "\n[blue::b]mihomo[-:-:-]\n\n[gray]未安装[-]\n\n[gray]Meta Kernel[-]"
+			infoText = "\n[blue::b]mihomo[-:-:-]\n\n['+mihomotui.ColorMuted+']未安装[-]\n\n['+mihomotui.ColorMuted+']Meta Kernel[-]"
 		} else {
 			infoText = fmt.Sprintf(
 				"\n[blue::b]mihomo[-:-:-]\n\n"+
 					"[::b]v%s[-:-:-]\n\n"+
-					"[gray]Meta Kernel[-]",
+					"['+mihomotui.ColorMuted+']Meta Kernel[-]",
 				currentVersion,
 			)
 		}
 		versionInfo.SetText(infoText)
 
 		if isChecking {
-			updateStatus.SetText(" [yellow]●[-] 检查中... ")
+			updateStatus.SetText(" ['+mihomotui.ColorWarn+']●[-] 检查中... ")
 			updateBtn.SetLabel(" 检查中 ")
 		} else if currentVersion == "" {
 			// 未安装：始终显示下载安装
 			if latestVersion != "" {
-				updateStatus.SetText(fmt.Sprintf(" [yellow]●[-] 最新: v%s ", latestVersion))
+				updateStatus.SetText(fmt.Sprintf(" ['+mihomotui.ColorWarn+']●[-] 最新: v%s ", latestVersion))
 			} else {
-				updateStatus.SetText(" [gray]●[-] 未安装 ")
+				updateStatus.SetText(" ['+mihomotui.ColorMuted+']●[-] 未安装 ")
 			}
 			updateBtn.SetLabel(" 下载安装 ")
 		} else if hasNewVersion {
-			updateStatus.SetText(fmt.Sprintf(" [yellow]●[-] 最新: v%s ", latestVersion))
+			updateStatus.SetText(fmt.Sprintf(" ['+mihomotui.ColorWarn+']●[-] 最新: v%s ", latestVersion))
 			updateBtn.SetLabel(fmt.Sprintf(" 更新到 v%s ", latestVersion))
 		} else if latestVersion != "" {
-			updateStatus.SetText(" [green]●[-] 已是最新版本 ")
+			updateStatus.SetText(" ['+mihomotui.ColorOK+']●[-] 已是最新版本 ")
 			updateBtn.SetLabel(" 检查更新 ")
 		} else {
-			updateStatus.SetText(" [gray]●[-] 点击检查 ")
+			updateStatus.SetText(" ['+mihomotui.ColorMuted+']●[-] 点击检查 ")
 			updateBtn.SetLabel(" 检查更新 ")
 		}
 	}
@@ -368,7 +368,7 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 					settingsPages.HidePage("upgrade-progress")
 					settingsPages.RemovePage("upgrade-progress")
 					isChecking = false
-					updateStatus.SetText(" [red]●[-] 更新失败 ")
+					updateStatus.SetText(" ['+mihomotui.ColorError+']●[-] 更新失败 ")
 					showModal("更新失败", fmt.Sprintf("获取 IPC 客户端失败: %v", err))
 					refreshVersionCard()
 				})
@@ -380,7 +380,7 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 					settingsPages.HidePage("upgrade-progress")
 					settingsPages.RemovePage("upgrade-progress")
 					isChecking = false
-					updateStatus.SetText(" [red]●[-] 更新失败 ")
+					updateStatus.SetText(" ['+mihomotui.ColorError+']●[-] 更新失败 ")
 					showModal("更新失败", fmt.Sprintf("启动升级失败: %v", err))
 					refreshVersionCard()
 				})
@@ -408,14 +408,14 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 						isChecking = false
 						currentVersion = latestVersion
 						hasNewVersion = false
-						updateStatus.SetText(" [green]●[-] 更新成功 ")
+						updateStatus.SetText(" ['+mihomotui.ColorOK+']●[-] 更新成功 ")
 						showModal("更新成功", fmt.Sprintf("mihomo 已更新至 v%s", latestVersion))
 						refreshVersionCard()
 					case "error":
 						settingsPages.HidePage("upgrade-progress")
 						settingsPages.RemovePage("upgrade-progress")
 						isChecking = false
-						updateStatus.SetText(" [red]●[-] 更新失败 ")
+						updateStatus.SetText(" ['+mihomotui.ColorError+']●[-] 更新失败 ")
 						showModal("更新失败", fmt.Sprintf("下载或安装失败: %s", progress.Message))
 						refreshVersionCard()
 					}
@@ -466,9 +466,9 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 				"[::b]mihomo-tui[-:-:-]\n\n" +
 				"版本: v0.1.0\n" +
 				"Go 版本: 1.26.1\n\n" +
-				"为 [blue]mihomo[-] 内核开发的终端 UI 配置工具\n\n" +
+				"为 ['+mihomotui.ColorInfo+']mihomo[-] 内核开发的终端 UI 配置工具\n\n" +
 				"仓库: github.com/mihomo-tui/mihomo-tui\n\n" +
-				"[gray]© 2025 mihomo-tui Team[-]",
+				"['+mihomotui.ColorMuted+']© 2025 mihomo-tui Team[-]",
 		))
 	aboutText.SetBorder(true).SetTitle(" 关于 ")
 

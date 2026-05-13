@@ -463,27 +463,8 @@ func sortNodes(nodes []mihomotui.ProxyNode) {
 // createProxyCard 创建代理节点卡片
 func createProxyCard(node mihomotui.ProxyNode, selected bool, onClick func(), onTest func()) tview.Primitive {
 	// 延迟颜色与文本
-	delayColor := "gray"
-	delayText := "未测试"
-	switch {
-	case node.Delay == -3:
-		delayText = "未测试"
-	case node.Delay == -2:
-		delayText = "测试中"
-		delayColor = "yellow"
-	case node.Delay == -1:
-		delayText = "超时"
-		delayColor = "red"
-	case node.Delay < 100:
-		delayText = fmt.Sprintf("%dms", node.Delay)
-		delayColor = "green"
-	case node.Delay < 200:
-		delayText = fmt.Sprintf("%dms", node.Delay)
-		delayColor = "yellow"
-	default:
-		delayText = fmt.Sprintf("%dms", node.Delay)
-		delayColor = "red"
-	}
+	delayColor := DelayColor(node.Delay)
+	delayText := DelayText(node.Delay)
 
 	// 信息文本
 	var text string

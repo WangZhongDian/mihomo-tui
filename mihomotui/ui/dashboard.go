@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -16,7 +17,7 @@ import (
 func buildSubCardText() string {
 	cfg := mihomotui.GlobalConfig()
 	if len(cfg.Subscriptions) == 0 {
-		return "[gray] 暂无订阅\n\n 请前往订阅页面导入[-]"
+		return "[" + mihomotui.ColorMuted + "] 暂无订阅\n\n 请前往订阅页面导入[-]"
 	}
 	var sub mihomotui.SubscriptionMeta
 	if cfg.ActiveSubscription >= 0 && cfg.ActiveSubscription < len(cfg.Subscriptions) {
@@ -28,27 +29,23 @@ func buildSubCardText() string {
 	if sub.TotalGB > 0 {
 		percent = sub.UsedGB / sub.TotalGB * 100
 	}
-	progressWidth := 20
-	filled := 0
-	if percent > 0 {
-		filled = min(int(percent/100*float64(progressWidth)), progressWidth)
-	}
-	bar := strings.Repeat("━", filled) + strings.Repeat("─", progressWidth-filled)
+	bar := ProgressBar(mihomotui.ProgressBarWidth, percent)
 	return fmt.Sprintf(
-		"[blue::b]  %s[-:-:-]  [订阅]\n\n"+
+		"[%s]  %s[-:-:-]  [订阅]\n\n"+
 			" 来源: %s\n"+
 			" 更新: %s\n"+
 			" 流量: %.2fGB / %.2fGB\n\n"+
 			" %.0f%%\n"+
-			" [blue]%s[-]────────────────────",
-		sub.Name, sub.URL, sub.UpdatedAt,
+			" %s────────────────────",
+		mihomotui.ColorHeader, sub.Name, sub.URL, sub.UpdatedAt,
 		sub.UsedGB, sub.TotalGB, percent, bar,
 	)
 }
 
 // NewDashboard 创建首页仪表盘页面
-// NewDashboard 创建首页仪表盘，返回主布局和刷新函数
-func NewDashboard(app *tview.Application) (tview.Primitive, func()) {
+func NewDashboard(app *tview.Application) (Page, func()) {
+	ctx, cancel := context.WithCancel(context.Background())
+
 	// 订阅信息卡片
 	subCard := tview.NewTextView().
 		SetText(buildSubCardText()).
@@ -59,7 +56,7 @@ func NewDashboard(app *tview.Application) (tview.Primitive, func()) {
 
 	// 当前节点卡片（动态更新）
 	nodeCard := tview.NewTextView().
-		SetText(" [gray]○[-:-:-] 内核未运行\n    暂无节点信息").
+		SetText(" [" + mihomotui.ColorMuted + "]○[-:-:-] 内核未运行\n    暂无节点信息").
 		SetDynamicColors(true)
 	nodeCard.SetBorder(true).
 		SetTitle(" 当前节点 ").
@@ -76,7 +73,6 @@ func NewDashboard(app *tview.Application) (tview.Primitive, func()) {
 				return
 			}
 
-			// 优先获取 Global 组，其次 Auto，再取第一个策略组
 			var group *mihomotui.ProxyGroup
 			for _, name := range []string{"Global", "Auto", "Manual"} {
 				for i := range groups {
@@ -110,28 +106,16 @@ func NewDashboard(app *tview.Application) (tview.Primitive, func()) {
 				return
 			}
 
-			delay := activeNode.Delay
-			delayColor := "green"
-			delayText := fmt.Sprintf("%dms", delay)
-			if delay < 0 {
-				delayColor = "gray"
-				switch delay {
-				case -3:
-					delayText = "未测试"
-				case -2:
-					delayText = "测试中"
-				case -1:
-					delayText = "超时"
-				}
-			}
+			delayColor := DelayColor(activeNode.Delay)
+			delayText := DelayText(activeNode.Delay)
 
 			text := fmt.Sprintf(
-				" [green::b]●[-:-:-] %s\n"+
+				" [%s::b]●[-:-:-] %s\n"+
 					"    %s\n\n"+
 					" 代理组: [::u]%s[-:-:-]\n\n"+
-					" 节点: [green]●[-] %s [%s]%s[-]",
-				activeNode.Name, activeNode.Type, group.Name,
-				activeNode.Name, delayColor, delayText,
+					" 节点: [%s]●[-] %s [%s]%s[-]",
+				mihomotui.ColorOK, activeNode.Name, activeNode.Type, group.Name,
+				mihomotui.ColorOK, activeNode.Name, delayColor, delayText,
 			)
 
 			app.QueueUpdateDraw(func() {
@@ -149,9 +133,9 @@ func NewDashboard(app *tview.Application) (tview.Primitive, func()) {
 	// 流量统计卡片
 	statsCard := tview.NewTextView().
 		SetText(
-			" 上传: [yellow]0.00[-] B/s\n" +
-				" 下载: [yellow]0.00[-] B/s\n" +
-				" 总计: [yellow]0.0[-] MB",
+			" 上传: [" + mihomotui.ColorWarn + "]0.00[-] B/s\n" +
+				" 下载: [" + mihomotui.ColorWarn + "]0.00[-] B/s\n" +
+				" 总计: [" + mihomotui.ColorWarn + "]0.0[-] MB",
 		).
 		SetDynamicColors(true)
 	statsCard.SetBorder(true).
@@ -179,7 +163,7 @@ func NewDashboard(app *tview.Application) (tview.Primitive, func()) {
 	}
 
 	// 内核状态卡片（使用根级 showModal）
-	kernelCard := newKernelStatusCard(app, showModal)
+	kernelCard := newKernelStatusCard(app, showModal, ctx)
 
 	// 使用 Grid 构建卡片网格布局
 	grid := tview.NewGrid().
@@ -196,7 +180,7 @@ func NewDashboard(app *tview.Application) (tview.Primitive, func()) {
 
 	rootPages.AddPage("main", grid, true, true)
 
-	// 定时通过 IPC 获取流量信息
+	// 流量流 goroutine
 	go func() {
 		time.Sleep(1 * time.Second)
 		updateNodeCard()
@@ -212,6 +196,11 @@ func NewDashboard(app *tview.Application) (tview.Primitive, func()) {
 		scanner := bufio.NewScanner(resp.Body)
 		totalUp, totalDown := 0.0, 0.0
 		for scanner.Scan() {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 			line := scanner.Text()
 			line = strings.TrimSpace(line)
 			if line == "" {
@@ -230,31 +219,32 @@ func NewDashboard(app *tview.Application) (tview.Primitive, func()) {
 			if err := json.Unmarshal([]byte(line), &traffic); err != nil {
 				continue
 			}
-			// up/down 单位是 kbps，转换为 KB/s
 			upSpeed := float64(traffic.Up) / 8
 			downSpeed := float64(traffic.Down) / 8
 			totalUp += upSpeed
 			totalDown += downSpeed
-			// 只在 tview 应用存在时更新（避免 panic）
-			if app != nil {
-				app.QueueUpdateDraw(func() {
-					statsCard.SetText(fmt.Sprintf(
-						" 上传: [yellow]%.2f[-] KB/s\n"+
-							" 下载: [yellow]%.2f[-] KB/s\n"+
-							" 总计: [yellow]%.2f[-] MB",
-						upSpeed, downSpeed, (totalUp+totalDown)/1024,
-					))
-				})
-			}
+			app.QueueUpdateDraw(func() {
+				statsCard.SetText(fmt.Sprintf(
+					" 上传: ["+mihomotui.ColorWarn+"]%.2f[-] KB/s\n"+
+						" 下载: ["+mihomotui.ColorWarn+"]%.2f[-] KB/s\n"+
+						" 总计: ["+mihomotui.ColorWarn+"]%.2f[-] MB",
+					upSpeed, downSpeed, (totalUp+totalDown)/1024,
+				))
+			})
 		}
 	}()
 
 	// 定时刷新节点卡片
 	go func() {
-		ticker := time.NewTicker(5 * time.Second)
+		ticker := time.NewTicker(mihomotui.DefaultRefreshInterval)
 		defer ticker.Stop()
-		for range ticker.C {
-			updateNodeCard()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				updateNodeCard()
+			}
 		}
 	}()
 
@@ -264,11 +254,12 @@ func NewDashboard(app *tview.Application) (tview.Primitive, func()) {
 		updateNodeCard()
 	}
 
-	return rootPages, refresh
+	page := &pageWrapper{Primitive: rootPages, ctx: ctx, cancel: cancel}
+	return page, refresh
 }
 
 // newKernelStatusCard 创建内核状态卡片（显示运行状态 + 外部资源 + 启停按钮）
-func newKernelStatusCard(app *tview.Application, showModal func(string, string)) tview.Primitive {
+func newKernelStatusCard(app *tview.Application, showModal func(string, string), ctx context.Context) tview.Primitive {
 	statusText := tview.NewTextView().
 		SetDynamicColors(true).
 		SetTextAlign(tview.AlignCenter)
@@ -283,9 +274,9 @@ func newKernelStatusCard(app *tview.Application, showModal func(string, string))
 
 	isRunning := false
 	pid := 0
-	installedVersion := ""      // 从服务端同步的内核版本
-	resourceInfos := []mihomotui.ExternalResourceInfo{} // 从服务端同步的外部资源
-	launchMode := ""            // 从服务端同步的运行模式
+	installedVersion := ""
+	resourceInfos := []mihomotui.ExternalResourceInfo{}
+	launchMode := ""
 
 	updateResText := func() {
 		var sb strings.Builder
@@ -293,10 +284,10 @@ func newKernelStatusCard(app *tview.Application, showModal func(string, string))
 		allExist := true
 		for _, r := range resourceInfos {
 			if r.Exists {
-				fmt.Fprintf(&sb, " [green]●[-] %s  %s\n",
+				fmt.Fprintf(&sb, " ["+mihomotui.ColorOK+"]●[-] %s  %s\n",
 					r.Name, mihomotui.FormatSize(r.Size))
 			} else {
-				fmt.Fprintf(&sb, " [gray]○[-] %s  未下载\n", r.Name)
+				fmt.Fprintf(&sb, " ["+mihomotui.ColorMuted+"]○[-] %s  未下载\n", r.Name)
 				allExist = false
 			}
 		}
@@ -310,27 +301,27 @@ func newKernelStatusCard(app *tview.Application, showModal func(string, string))
 
 	modeText := func() string {
 		if launchMode == "embedded" {
-			return "[blue]一体服务[-]"
+			return "[" + mihomotui.ColorInfo + "]一体服务[-]"
 		}
-		return "[yellow]分体服务[-]"
+		return "[" + mihomotui.ColorWarn + "]分体服务[-]"
 	}
 
 	updateStatus := func() {
 		var binaryStatus string
 		if installedVersion != "" {
-			binaryStatus = fmt.Sprintf("[green]●[-] 内核已安装 v%s", installedVersion)
+			binaryStatus = fmt.Sprintf("["+mihomotui.ColorOK+"]●[-] 内核已安装 v%s", installedVersion)
 		} else {
-			binaryStatus = "[gray]○[-] 内核未安装"
+			binaryStatus = "[" + mihomotui.ColorMuted + "]○[-] 内核未安装"
 		}
 		if isRunning {
 			statusText.SetText(fmt.Sprintf(
-				"[green::b]●[-:-:-] 运行中  %s\n PID: %d\n%s",
+				"["+mihomotui.ColorOK+"::b]●[-:-:-] 运行中  %s\n PID: %d\n%s",
 				modeText(), pid, binaryStatus,
 			))
 			actionBtn.SetLabel(" 停止内核 ")
 		} else {
 			statusText.SetText(fmt.Sprintf(
-				"[gray]○[-:-:-] 已停止  %s\n 内核未运行\n%s",
+				"["+mihomotui.ColorMuted+"]○[-:-:-] 已停止  %s\n 内核未运行\n%s",
 				modeText(), binaryStatus,
 			))
 			actionBtn.SetLabel(" 启动内核 ")
@@ -390,7 +381,6 @@ func newKernelStatusCard(app *tview.Application, showModal func(string, string))
 					return
 				}
 			}
-			// 延迟刷新状态
 			time.Sleep(500 * time.Millisecond)
 			refreshStatus()
 		}()
@@ -434,12 +424,21 @@ func newKernelStatusCard(app *tview.Application, showModal func(string, string))
 
 	// 定时刷新状态
 	go func() {
-		time.Sleep(1 * time.Second)
-		refreshStatus()
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(1 * time.Second):
+			refreshStatus()
+		}
 		ticker := time.NewTicker(3 * time.Second)
 		defer ticker.Stop()
-		for range ticker.C {
-			refreshStatus()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				refreshStatus()
+			}
 		}
 	}()
 
@@ -447,25 +446,21 @@ func newKernelStatusCard(app *tview.Application, showModal func(string, string))
 }
 
 // newNetSettingsCard 创建可交互的网络设置卡片（状态实时同步）
-// 返回卡片和刷新函数，刷新函数会从 GlobalConfig 重新读取状态
 func newNetSettingsCard(app *tview.Application) (tview.Primitive, func()) {
-	activeTab := 0 // 0 = 系统代理, 1 = 虚拟网卡
+	activeTab := 0
 	daemonIsRoot := false
 
 	content := tview.NewTextView().SetDynamicColors(true)
 
-	// 使用 Button 实现 Tab，更可靠地响应鼠标点击
 	tabProxy := tview.NewButton(" ■ 系统代理 ")
 	tabProxy.SetBorder(false)
 	tabTun := tview.NewButton(" □ 虚拟网卡模式 ")
 	tabTun.SetBorder(false)
 
-	// 状态指示灯 + 开关按钮
 	statusIndicator := tview.NewTextView().SetDynamicColors(true)
 	toggleBtn := tview.NewButton(" 关闭 ")
 	toggleBtn.SetBorder(false)
 
-	// 更新 Tab 和内容的状态（每次从 GlobalConfig 读取最新值）
 	update := func() {
 		cfg := mihomotui.GlobalConfig()
 		proxyEnabled := cfg.System.SystemProxy
@@ -475,11 +470,11 @@ func newNetSettingsCard(app *tview.Application) (tview.Primitive, func()) {
 			tabTun.SetLabel(" □ 虚拟网卡模式 ")
 			if proxyEnabled {
 				content.SetText("[black:green] 已开启 [-:-:-]\n\n 系统代理已启用，您的应用将通过代理访问网络")
-				statusIndicator.SetText(" [green::b]●[-:-:-] 运行中 ")
+				statusIndicator.SetText(" [" + mihomotui.ColorOK + "::b]●[-:-:-] 运行中 ")
 				toggleBtn.SetLabel(" 关闭 ")
 			} else {
 				content.SetText("[black:gray] 已关闭 [-:-:-]\n\n 系统代理已关闭")
-				statusIndicator.SetText(" [gray]○[-:-:-] 已停止 ")
+				statusIndicator.SetText(" [" + mihomotui.ColorMuted + "]○[-:-:-] 已停止 ")
 				toggleBtn.SetLabel(" 开启 ")
 			}
 		} else {
@@ -487,23 +482,23 @@ func newNetSettingsCard(app *tview.Application) (tview.Primitive, func()) {
 			tabTun.SetLabel(" ■ 虚拟网卡模式 ")
 			if tunEnabled {
 				content.SetText("[black:green] 已开启 [-:-:-]\n\n 虚拟网卡模式已启用")
-				statusIndicator.SetText(" [green::b]●[-:-:-] 运行中 ")
+				statusIndicator.SetText(" [" + mihomotui.ColorOK + "::b]●[-:-:-] 运行中 ")
 				toggleBtn.SetLabel(" 关闭 ")
 			} else {
 				var msg string
 				if !daemonIsRoot {
-					msg = "[black:gray] 已关闭 [-:-:-]\n\n 虚拟网卡模式已关闭\n\n [red]⚠ 服务端未以 root 权限运行，无法使用 TUN 模式[-]"
+					msg = "[black:gray] 已关闭 [-:-:-]\n\n 虚拟网卡模式已关闭\n\n [" + mihomotui.ColorError + "]⚠ 服务端未以 root 权限运行，无法使用 TUN 模式[-]"
 				} else {
 					msg = "[black:gray] 已关闭 [-:-:-]\n\n 虚拟网卡模式已关闭"
 				}
 				content.SetText(msg)
-				statusIndicator.SetText(" [gray]○[-:-:-] 已停止 ")
+				statusIndicator.SetText(" [" + mihomotui.ColorMuted + "]○[-:-:-] 已停止 ")
 				toggleBtn.SetLabel(" 开启 ")
 			}
 		}
 	}
 
-	// 异步获取守护进程权限信息，成功后刷新 UI
+	// 异步获取守护进程权限信息
 	go func() {
 		client, err := mihomotui.GetIPCClient()
 		if err != nil {
@@ -574,8 +569,7 @@ func newNetSettingsCard(app *tview.Application) (tview.Primitive, func()) {
 	return card, update
 }
 
-// newProxyModeCard 创建可交互的代理模式卡片（模式持久化到配置，变更自动重载）
-// 返回卡片和刷新函数
+// newProxyModeCard 创建可交互的代理模式卡片
 func newProxyModeCard() (tview.Primitive, func()) {
 	modes := []string{"规则", "全局", "直连"}
 	modeValues := []string{"rule", "global", "direct"}
@@ -585,7 +579,6 @@ func newProxyModeCard() (tview.Primitive, func()) {
 		"\n 所有流量直接连接，不经过代理",
 	}
 
-	// 从配置初始化当前模式
 	cfg := mihomotui.GlobalConfig()
 	activeMode := 0
 	for i, v := range modeValues {
@@ -603,11 +596,9 @@ func newProxyModeCard() (tview.Primitive, func()) {
 	update := func() {
 		for i, tv := range tabViews {
 			if i == activeMode {
-				// 选中状态：蓝底白字加粗 + ▶ 前缀
 				tv.SetText(fmt.Sprintf("[white:blue:b] ▶ %s [-:-:-]", modes[i]))
 			} else {
-				// 未选中状态：灰字透明底
-				tv.SetText(fmt.Sprintf("[gray]   %s [-]", modes[i]))
+				tv.SetText(fmt.Sprintf("["+mihomotui.ColorMuted+"]   %s [-]", modes[i]))
 			}
 		}
 		content.SetText(descriptions[activeMode])
@@ -622,7 +613,6 @@ func newProxyModeCard() (tview.Primitive, func()) {
 			if action == tview.MouseLeftClick {
 				activeMode = idx
 				update()
-				// 持久化到配置并通过 IPC 同步到服务端（触发自动生成+重载）
 				go func(mode string) {
 					cfg := mihomotui.GlobalConfig()
 					cfg.ProxyMode = mode

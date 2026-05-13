@@ -56,9 +56,29 @@ func Run(standalone bool) error {
 	pages.AddPage("test", testPage, true, false)
 	pages.AddPage("settings", settingsPage, true, false)
 
+	// 页面映射，用于生命周期管理
+	pageMap := map[string]tview.Primitive{
+		"home":         homePage,
+		"proxy":        proxyPage,
+		"subscription": subPage,
+		"connections":  connPage,
+		"rules":        rulesPage,
+		"logs":         logsPage,
+		"test":         testPage,
+		"settings":     settingsPage,
+	}
+	var currentPage string
+
 	// 导航切换函数
 	switchPage := func(page string) func() {
 		return func() {
+			// 切换前停止当前页面的后台 goroutine
+			if currentPage != "" && currentPage != page {
+				if p, ok := pageMap[currentPage].(Page); ok {
+					p.Stop()
+				}
+			}
+			currentPage = page
 			pages.SwitchToPage(page)
 		}
 	}

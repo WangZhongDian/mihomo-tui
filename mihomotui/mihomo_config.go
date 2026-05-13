@@ -7,13 +7,20 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
 func generateRandomSecret() string {
 	b := make([]byte, 16)
-	_, _ = rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		// 如果系统 RNG 失败，使用时间作为 fallback（极低概率事件）
+		Warnf("生成随机 secret 时系统 RNG 失败，使用 fallback: %v", err)
+		for i := range b {
+			b[i] = byte(time.Now().UnixNano() >> (i * 8))
+		}
+	}
 	return hex.EncodeToString(b)
 }
 
@@ -261,13 +268,23 @@ var builtInRulesProviders = map[string]ruleProviderYAML{
 	},
 }
 
-// GenerateMihomoConfig 根据当前激活订阅生成 mihomo 配置文件（使用 proxy-providers 模式）
-func (c *Config) GenerateMihomoConfig() error {
+// ensureSecret 确保 API Secret 已设置（如为空则生成并持久化）
+func (c *Config) ensureSecret() error {
+	if c.Mihomo.Secret == "" {
+		c.Mihomo.Secret = generateRandomSecret()
+		if err := c.Flush(); err != nil {
+			return fmt.Errorf("保存 secret 失败: %w", err)
+		}
+	}
+	return nil
+}
+
+// buildProxyConfig 构建代理相关配置（proxy-providers、proxies、proxy-groups）
+func (c *Config) buildProxyConfig() (map[string]proxyProviderYAML, []proxyYAML, []proxyGroupYAML, error) {
 	if len(c.Subscriptions) == 0 {
-		return fmt.Errorf("没有订阅，请先导入订阅")
+		return nil, nil, nil, fmt.Errorf("没有订阅，请先导入订阅")
 	}
 
-	// 构建 proxy-providers：每个订阅对应一个 provider
 	proxyProviders := make(map[string]proxyProviderYAML)
 	providerNames := make([]string, 0, len(c.Subscriptions))
 	for i, sub := range c.Subscriptions {
@@ -279,11 +296,11 @@ func (c *Config) GenerateMihomoConfig() error {
 		proxyProviders[providerName] = proxyProviderYAML{
 			URL:      sub.URL,
 			Type:     "http",
-			Interval: 86400,
+			Interval: DayInSeconds,
 			HealthCheck: healthCheckYAML{
 				Enable:   true,
 				URL:      "https://www.gstatic.com/generate_204",
-				Interval: 300,
+				Interval: HealthCheckInterval,
 			},
 			Override: providerOverrideYAML{
 				AdditionalPrefix: "",
@@ -291,27 +308,18 @@ func (c *Config) GenerateMihomoConfig() error {
 		}
 	}
 	if len(providerNames) == 0 {
-		return fmt.Errorf("没有有效的订阅 URL")
+		return nil, nil, nil, fmt.Errorf("没有有效的订阅 URL")
 	}
 
-	// 固定代理列表（DIRECT 是 mihomo 内置代理，无需在此定义）
 	proxies := []proxyYAML{}
 
-	// 构建 proxy-groups
-	allGroups := append([]string{}, providerNames...)
-	allGroups = append(allGroups, "DIRECT")
-
-	// 根据代理模式构建 proxy-groups 和 rules
-	var proxyGroups []proxyGroupYAML
-	// var rules []string
-
-	proxyGroups = []proxyGroupYAML{
+	proxyGroups := []proxyGroupYAML{
 		{
 			Name:      "Auto",
 			Type:      "url-test",
 			Use:       providerNames,
 			URL:       "http://www.gstatic.com/generate_204",
-			Interval:  300,
+			Interval:  HealthCheckInterval,
 			Tolerance: 50,
 		},
 		{
@@ -328,9 +336,14 @@ func (c *Config) GenerateMihomoConfig() error {
 		},
 	}
 
-	// 构建 rule-providers：每个规则订阅对应一个 provider
+	return proxyProviders, proxies, proxyGroups, nil
+}
+
+// buildRuleConfig 构建规则相关配置（rule-providers、rules）
+func (c *Config) buildRuleConfig() (map[string]ruleProviderYAML, []string, error) {
 	ruleProviders := make(map[string]ruleProviderYAML)
 	rpProxyGroups := make(map[string]string)
+
 	for _, rp := range c.RuleProviderSubscriptions {
 		if rp.URL == "" {
 			continue
@@ -341,7 +354,7 @@ func (c *Config) GenerateMihomoConfig() error {
 		}
 		interval := rp.Interval
 		if interval <= 0 {
-			interval = 86400
+			interval = DayInSeconds
 		}
 		proxyGroup := rp.ProxyGroup
 		if proxyGroup == "" {
@@ -352,7 +365,6 @@ func (c *Config) GenerateMihomoConfig() error {
 		if ext == "text" {
 			ext = "txt"
 		}
-		// 规则名称：文件名前3个字符 + URL 的 MD5
 		prefix := sanitized
 		if len(prefix) > 3 {
 			prefix = prefix[:3]
@@ -371,46 +383,45 @@ func (c *Config) GenerateMihomoConfig() error {
 		rpProxyGroups[providerName] = proxyGroup
 	}
 
-	// 构建 rules：先高优先级直连规则，再 rule-provider RULE-SET，最后兜底
 	rules := make([]string, 0)
-	// SSH 流量必须直连，防止 TUN 劫持后误走代理导致远程服务器 SSH 卡顿/断开
-	rules = append(rules, "DST-PORT,22,DIRECT")
-	for name := range ruleProviders {
-		pg := rpProxyGroups[name]
-		if pg == "" {
-			pg = "Auto"
+
+	switch c.ProxyMode {
+	case "global":
+		rules = append(rules, "MATCH,Auto")
+	case "direct":
+		rules = append(rules, "MATCH,DIRECT")
+	case "rule":
+		// SSH 流量必须直连，防止 TUN 劫持后误走代理导致远程服务器 SSH 卡顿/断开
+		rules = append(rules, "DST-PORT,22,DIRECT")
+		for name := range ruleProviders {
+			pg := rpProxyGroups[name]
+			if pg == "" {
+				pg = "Auto"
+			}
+			rules = append(rules, fmt.Sprintf("RULE-SET,%s,%s", name, pg))
 		}
-		rules = append(rules, fmt.Sprintf("RULE-SET,%s,%s", name, pg))
-	}
 
-	// 加载默认规则
-	for name, rp := range builtInRulesProviders {
-		if _, exists := ruleProviders[name]; !exists {
-			ruleProviders[name] = rp
-			rules = append(rules, fmt.Sprintf("RULE-SET,%s,%s", name, rp.ProxyGroup))
+		// 加载内置规则提供者
+		for name, rp := range builtInRulesProviders {
+			if _, exists := ruleProviders[name]; !exists {
+				ruleProviders[name] = rp
+				rules = append(rules, fmt.Sprintf("RULE-SET,%s,%s", name, rp.ProxyGroup))
+			}
 		}
+		rules = append(rules, DEFAULT_RULES...)
+		rules = append(rules, "MATCH,Auto")
 	}
+	return ruleProviders, rules, nil
+}
 
-	// 兜底规则
-	rules = append(rules, DEFAULT_RULES...)
-	rules = append(rules, "MATCH,Auto")
-
+// buildGlobalConfig 构建全局基础配置（端口、DNS、TUN、嗅探等）
+func (c *Config) buildGlobalConfig() mihomoConfigYAML {
 	bindAddress := "*"
 	if !c.Mihomo.AllowLan {
 		bindAddress = "127.0.0.1"
 	}
 
-	// 重新加载配置文件以获取最新的 secret（避免多进程间 secret 不一致）
-	freshCfg := LoadConfig()
-	c.Mihomo.Secret = freshCfg.Mihomo.Secret
-	if c.Mihomo.Secret == "" {
-		c.Mihomo.Secret = generateRandomSecret()
-		if err := c.Flush(); err != nil {
-			return fmt.Errorf("保存 secret 失败: %w", err)
-		}
-	}
-
-	mc := mihomoConfigYAML{
+	return mihomoConfigYAML{
 		Port:               c.Mihomo.HTTPPort,
 		SocksPort:          c.Mihomo.SOCKS5Port,
 		MixedPort:          c.Mihomo.MixedPort,
@@ -429,13 +440,12 @@ func (c *Config) GenerateMihomoConfig() error {
 		ExternalUIURL:      "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip",
 		GeodataMode:        true,
 		GeoxURL: geoxURLYAML{
-			GeoIP:   "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip-lite.dat",
-			GeoSite: "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat",
+			GeoIP:   DefaultGeoIPDownloadURL,
+			GeoSite: DefaultGeoSiteDownloadURL,
 			MMDB:    "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/country-lite.mmdb",
 			ASN:     "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/GeoLite2-ASN.mmdb",
 		},
 		FindProcessMode: "strict",
-
 		Profile: profileYAML{
 			StoreSelected: true,
 			StoreFakeIP:   true,
@@ -497,26 +507,48 @@ func (c *Config) GenerateMihomoConfig() error {
 				"https://dns.alidns.com/dns-query",
 			},
 		},
-		ProxyProviders: proxyProviders,
-		Proxies:        proxies,
-		ProxyGroups:    proxyGroups,
-		RuleProviders:  ruleProviders,
-		Rules:          rules,
+	}
+}
+
+// GenerateMihomoConfig 根据当前激活订阅生成 mihomo 配置文件（使用 proxy-providers 模式）
+func (c *Config) GenerateMihomoConfig() error {
+	// 1. 确保 Secret
+	if err := c.ensureSecret(); err != nil {
+		return err
 	}
 
+	// 2. 构建代理配置
+	proxyProviders, proxies, proxyGroups, err := c.buildProxyConfig()
+	if err != nil {
+		return err
+	}
+
+	// 3. 构建规则配置
+	ruleProviders, rules, err := c.buildRuleConfig()
+	if err != nil {
+		return err
+	}
+
+	// 4. 构建全局配置并合并
+	mc := c.buildGlobalConfig()
+	mc.ProxyProviders = proxyProviders
+	mc.Proxies = proxies
+	mc.ProxyGroups = proxyGroups
+	mc.RuleProviders = ruleProviders
+	mc.Rules = rules
+
+	// 5. 序列化并写入文件
 	data, err := yaml.Marshal(mc)
 	if err != nil {
 		return fmt.Errorf("序列化 mihomo 配置失败: %w", err)
 	}
 
-	// 使用固定的 mihomo 工作目录路径
 	mihomoDir := filepath.Join(GetConfigDir(), "mihomo")
 	if err := os.MkdirAll(mihomoDir, 0755); err != nil {
 		return fmt.Errorf("创建 mihomo 配置目录失败: %w", err)
 	}
 	configPath := filepath.Join(mihomoDir, MIHOMO_CONFIG_NAME)
 
-	// 原子写入
 	tmpPath := configPath + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
 		return fmt.Errorf("写入临时 mihomo 配置失败: %w", err)

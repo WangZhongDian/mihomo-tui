@@ -9,7 +9,7 @@ import (
 	"mihomotui/mihomotui/ui"
 )
 
-const Version = "v0.1.0"
+// Version 通过 mihomotui.Version 统一维护
 
 // RunTUI 启动 TUI 客户端
 func RunTUI(dir string, standalone bool) {
@@ -17,7 +17,8 @@ func RunTUI(dir string, standalone bool) {
 		mihomotui.SetCustomConfigDir(dir)
 	}
 	if err := ui.Run(standalone); err != nil {
-		panic(err)
+		fmt.Fprintf(os.Stderr, "启动 TUI 失败: %v\n", err)
+		os.Exit(1)
 	}
 }
 
@@ -60,5 +61,5 @@ func RunUninstallService() {
 
 // RunVersion 输出版本信息
 func RunVersion() {
-	fmt.Printf("mihomo-tui %s\n", Version)
+	fmt.Printf("mihomo-tui %s\n", mihomotui.Version)
 }

@@ -7,15 +7,17 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
-	"time"
 	"strings"
+	"sync"
+	"time"
 )
 
+// 常量已迁移至 constants.go，保留别名避免编译中断
 const (
-	CONFIG_DIR_NAME    = "mihomo-tui"
-	CONFIG_FILE_NAME   = "config.yaml"
-	MIHOMO_CONFIG_NAME = "config.yaml"
-	SUBSCRIPTIONS_DIR  = "subscriptions"
+	CONFIG_DIR_NAME    = ConfigDirName
+	CONFIG_FILE_NAME   = ConfigFileName
+	MIHOMO_CONFIG_NAME = MihomoConfigName
+	SUBSCRIPTIONS_DIR  = SubscriptionsDir
 )
 
 // SystemConfig 系统设置
@@ -86,31 +88,39 @@ type Config struct {
 	LogLevel           string             `yaml:"log_level"`
 }
 
+// 下载 URL 常量已迁移至 constants.go，保留别名避免编译中断
 const (
-	DEFAULT_MIHOMO_DOWNLOAD_URL  = "https://github.com/MetaCubeX/mihomo/latest/download/"
-	DEFAULT_GEOIP_DOWNLOAD_URL   = "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip-lite.dat"
-	DEFAULT_GEOSITE_DOWNLOAD_URL = "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat"
+	DEFAULT_MIHOMO_DOWNLOAD_URL  = DefaultMihomoDownloadURL
+	DEFAULT_GEOIP_DOWNLOAD_URL   = DefaultGeoIPDownloadURL
+	DEFAULT_GEOSITE_DOWNLOAD_URL = DefaultGeoSiteDownloadURL
 )
 
-var globalConfig Config
-var customConfigDir string
+var (
+	globalConfig    Config
+	customConfigDir string
+	configMu        sync.RWMutex
+)
 
 func init() {
 	globalConfig = LoadConfig()
 	_ = InitLogger(globalConfig.LogDir, globalConfig.LogLevel)
 }
 
-// GlobalConfig 返回全局配置单例
+// GlobalConfig 返回全局配置单例（线程安全）
 func GlobalConfig() *Config {
+	configMu.RLock()
+	defer configMu.RUnlock()
 	return &globalConfig
 }
 
-// SetGlobalConfig 更新全局配置单例
+// SetGlobalConfig 更新全局配置单例（线程安全）
 func SetGlobalConfig(cfg Config) {
+	configMu.Lock()
+	defer configMu.Unlock()
 	globalConfig = cfg
 }
 
-// SetCustomConfigDir 设置自定义配置目录，设置后重新加载配置和日志
+// SetCustomConfigDir 设置自定义配置目录，设置后重新加载配置和日志（线程安全）
 func SetCustomConfigDir(dir string) {
 	if dir == "" {
 		return
@@ -124,15 +134,22 @@ func SetCustomConfigDir(dir string) {
 		Warnf("无法使用配置目录 %s: %v，继续使用当前目录 %s", absDir, err, GetConfigDir())
 		return
 	}
+	configMu.Lock()
 	customConfigDir = absDir
+	configMu.Unlock()
 	// 重新加载配置和日志
-	globalConfig = LoadConfig()
-	_ = InitLogger(globalConfig.LogDir, globalConfig.LogLevel)
+	cfg := LoadConfig()
+	SetGlobalConfig(cfg)
+	if err := InitLogger(cfg.LogDir, cfg.LogLevel); err != nil {
+		Warnf("重新初始化日志失败: %v", err)
+	}
 	Infof("配置目录已设置为: %s", absDir)
 }
 
-// GetCustomConfigDir 返回当前自定义配置目录（未设置返回空）
+// GetCustomConfigDir 返回当前自定义配置目录（未设置返回空，线程安全）
 func GetCustomConfigDir() string {
+	configMu.RLock()
+	defer configMu.RUnlock()
 	return customConfigDir
 }
 
@@ -283,12 +300,11 @@ func LoadConfig() Config {
 func (c *Config) Flush() error {
 	path := configFilePath()
 	// 如果 LogDir 是默认路径，不持久化到 yaml，让不同用户加载时动态计算
-	originalLogDir := c.LogDir
-	if c.LogDir == filepath.Join(GetConfigDir(), "logs") {
-		c.LogDir = ""
+	cfg := *c
+	if cfg.LogDir == filepath.Join(GetConfigDir(), "logs") {
+		cfg.LogDir = ""
 	}
-	data, err := yaml.Marshal(c)
-	c.LogDir = originalLogDir // 恢复，不影响内存中的值
+	data, err := yaml.Marshal(&cfg)
 	if err != nil {
 		Errorf("配置序列化失败: %v", err)
 		return fmt.Errorf("序列化配置失败: %w", err)

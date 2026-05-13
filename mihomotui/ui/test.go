@@ -1,5 +1,8 @@
 package ui
 
+// TODO: 当前为模拟数据页面，所有解锁测试结果由 math/rand 随机生成。
+// 后续需要接入真实的流媒体解锁检测接口（如通过代理访问各服务 API）。
+
 import (
 	"fmt"
 	"math/rand"
@@ -282,7 +285,7 @@ func createTestCard(item *TestItem, selected bool, onTest func()) tview.Primitiv
 	text := fmt.Sprintf(
 		" [::b]%s[-:-:-]\n"+
 			" [%s]● %s[-]%s\n"+
-			" [gray]%s[-]",
+			" ['+mihomotui.ColorMuted+']%s[-]",
 		item.Name,
 		statusColor, item.Status, regionTag,
 		item.Updated,

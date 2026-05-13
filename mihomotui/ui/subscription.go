@@ -122,26 +122,20 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 	deleteSub := func(idx int) {}
 	refreshCards := func() {}
 
-	// 刷新指定订阅
+	// 刷新指定订阅（仅更新时间戳，流量数据应由服务端同步）
 	refreshSub = func(idx int) {
 		if idx < 0 || idx >= len(subscriptions) {
 			return
 		}
 		sub := &subscriptions[idx]
-		sub.UpdatedAt = time.Now().Format("2006-01-02 15:04")
-		if sub.TotalGB > 0 {
-			sub.UsedGB += 0.01
-			if sub.UsedGB > sub.TotalGB {
-				sub.UsedGB = sub.TotalGB
-			}
-		}
+		sub.UpdatedAt = time.Now().Format(mihomotui.TimeFormatShort)
 		// 同步回 globalConfig
 		si := cfg.FindSubscriptionByName(sub.Name)
 		if si >= 0 {
 			cfg.Subscriptions[si].UpdatedAt = sub.UpdatedAt
-			cfg.Subscriptions[si].UsedGB = sub.UsedGB
-			cfg.Subscriptions[si].TotalGB = sub.TotalGB
-			_ = cfg.Flush()
+			if err := cfg.Flush(); err != nil {
+				mihomotui.Warnf("刷新订阅后保存配置失败: %v", err)
+			}
 		}
 		refreshCards()
 	}
@@ -214,7 +208,7 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 			infoText := fmt.Sprintf(
 				"[blue::b] %s[-:-:-]    %.2fGB / %.2fGB\n"+
 					" 来源: %s    更新: %s    %.0f%%\n"+
-					" [blue]%s[-]",
+					" ['+mihomotui.ColorInfo+']%s[-]",
 				sub.Name, sub.UsedGB, sub.TotalGB, sub.URL, sub.UpdatedAt, percent, bar,
 			)
 			info := tview.NewTextView().SetText(infoText).SetDynamicColors(true)

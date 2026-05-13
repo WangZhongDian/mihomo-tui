@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -21,7 +22,7 @@ type IPCClient struct {
 func NewIPCClient() (*IPCClient, error) {
 	sock := socketPath()
 	client := &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout: DefaultIPCRequestTimeout,
 		Transport: &http.Transport{
 			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
 				return net.Dial("unix", sock)
@@ -101,7 +102,6 @@ func (c *IPCClient) requestJSON(method, path string, body []byte, query map[stri
 
 // streamRequest 执行流式请求（不关闭响应 Body，由调用方关闭）
 func (c *IPCClient) streamRequest(method, path string, query map[string]string) (*http.Response, error) {
-	// 流式请求不使用超时
 	client := &http.Client{
 		Transport: &http.Transport{
 			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
@@ -124,6 +124,48 @@ func (c *IPCClient) streamRequest(method, path string, query map[string]string) 
 	return client.Do(req)
 }
 
+// unmarshalData 将 APIResponse.Data 反序列化为指定类型
+func unmarshalData[T any](resp *APIResponse) (T, error) {
+	var result T
+	data, err := json.Marshal(resp.Data)
+	if err != nil {
+		return result, fmt.Errorf("序列化响应数据失败: %w", err)
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return result, fmt.Errorf("解析响应数据失败: %w", err)
+	}
+	return result, nil
+}
+
+// ========== 单例管理 ==========
+
+var (
+	ipcClientSingleton *IPCClient
+	ipcClientMu        sync.Mutex
+)
+
+// GetIPCClient 获取 IPC 客户端单例（线程安全）
+func GetIPCClient() (*IPCClient, error) {
+	ipcClientMu.Lock()
+	defer ipcClientMu.Unlock()
+	if ipcClientSingleton != nil {
+		return ipcClientSingleton, nil
+	}
+	client, err := NewIPCClient()
+	if err != nil {
+		return nil, err
+	}
+	ipcClientSingleton = client
+	return client, nil
+}
+
+// ResetIPCClient 重置 IPC 客户端（用于重新连接）
+func ResetIPCClient() {
+	ipcClientMu.Lock()
+	defer ipcClientMu.Unlock()
+	ipcClientSingleton = nil
+}
+
 // ========== 配置 ==========
 
 // IPCGetConfig 从服务端获取配置
@@ -132,12 +174,8 @@ func (c *IPCClient) IPCGetConfig() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := json.Marshal(resp.Data)
+	cfgResp, err := unmarshalData[ConfigResponse](resp)
 	if err != nil {
-		return nil, err
-	}
-	var cfgResp ConfigResponse
-	if err := json.Unmarshal(data, &cfgResp); err != nil {
 		return nil, fmt.Errorf("解析配置响应失败: %w", err)
 	}
 	return &cfgResp.Config, nil
@@ -161,15 +199,7 @@ func (c *IPCClient) IPCGetSubscriptions() ([]SubscriptionMeta, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := json.Marshal(resp.Data)
-	if err != nil {
-		return nil, err
-	}
-	var subs []SubscriptionMeta
-	if err := json.Unmarshal(data, &subs); err != nil {
-		return nil, fmt.Errorf("解析订阅列表失败: %w", err)
-	}
-	return subs, nil
+	return unmarshalData[[]SubscriptionMeta](resp)
 }
 
 // IPCImportSubscription 导入订阅
@@ -209,15 +239,11 @@ func (c *IPCClient) IPCGetMihomoStatus() (*MihomoStatusResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := json.Marshal(resp.Data)
+	result, err := unmarshalData[MihomoStatusResponse](resp)
 	if err != nil {
-		return nil, err
-	}
-	var status MihomoStatusResponse
-	if err := json.Unmarshal(data, &status); err != nil {
 		return nil, fmt.Errorf("解析状态响应失败: %w", err)
 	}
-	return &status, nil
+	return &result, nil
 }
 
 // IPCStartMihomo 启动 mihomo
@@ -251,15 +277,11 @@ func (c *IPCClient) IPCGetMihomoUpgradeProgress() (*UpgradeProgress, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := json.Marshal(resp.Data)
+	result, err := unmarshalData[UpgradeProgress](resp)
 	if err != nil {
-		return nil, err
-	}
-	var progress UpgradeProgress
-	if err := json.Unmarshal(data, &progress); err != nil {
 		return nil, fmt.Errorf("解析升级进度失败: %w", err)
 	}
-	return &progress, nil
+	return &result, nil
 }
 
 // IPCGetMihomoVersion 获取当前安装的 mihomo 版本
@@ -268,12 +290,8 @@ func (c *IPCClient) IPCGetMihomoVersion() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	data, err := json.Marshal(resp.Data)
+	result, err := unmarshalData[map[string]string](resp)
 	if err != nil {
-		return "", err
-	}
-	var result map[string]string
-	if err := json.Unmarshal(data, &result); err != nil {
 		return "", fmt.Errorf("解析版本响应失败: %w", err)
 	}
 	return result["version"], nil
@@ -285,12 +303,8 @@ func (c *IPCClient) IPCGetMihomoLatestVersion() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	data, err := json.Marshal(resp.Data)
+	result, err := unmarshalData[map[string]string](resp)
 	if err != nil {
-		return "", err
-	}
-	var result map[string]string
-	if err := json.Unmarshal(data, &result); err != nil {
 		return "", fmt.Errorf("解析版本响应失败: %w", err)
 	}
 	return result["version"], nil
@@ -302,15 +316,7 @@ func (c *IPCClient) IPCCheckExternalResources() ([]ExternalResourceInfo, error) 
 	if err != nil {
 		return nil, err
 	}
-	data, err := json.Marshal(resp.Data)
-	if err != nil {
-		return nil, err
-	}
-	var resources []ExternalResourceInfo
-	if err := json.Unmarshal(data, &resources); err != nil {
-		return nil, fmt.Errorf("解析外部资源响应失败: %w", err)
-	}
-	return resources, nil
+	return unmarshalData[[]ExternalResourceInfo](resp)
 }
 
 // IPCDownloadExternalResources 下载外部资源文件
@@ -331,15 +337,11 @@ func (c *IPCClient) IPCGetDaemonInfo() (*DaemonInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := json.Marshal(resp.Data)
+	result, err := unmarshalData[DaemonInfo](resp)
 	if err != nil {
-		return nil, err
-	}
-	var info DaemonInfo
-	if err := json.Unmarshal(data, &info); err != nil {
 		return nil, fmt.Errorf("解析守护进程信息失败: %w", err)
 	}
-	return &info, nil
+	return &result, nil
 }
 
 // IPCGetConfigDir 获取守护进程使用的配置目录
@@ -348,12 +350,8 @@ func (c *IPCClient) IPCGetConfigDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	data, err := json.Marshal(resp.Data)
+	result, err := unmarshalData[map[string]string](resp)
 	if err != nil {
-		return "", err
-	}
-	var result map[string]string
-	if err := json.Unmarshal(data, &result); err != nil {
 		return "", fmt.Errorf("解析配置目录响应失败: %w", err)
 	}
 	return result["config_dir"], nil
@@ -380,31 +378,9 @@ func IPCWaitForDaemon(timeout time.Duration) error {
 		if IPCCheckDaemon() {
 			return nil
 		}
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(DefaultStreamInterval)
 	}
 	return fmt.Errorf("等待守护进程超时（%v）", timeout)
-}
-
-// IPCClientSingleton IPC 客户端单例
-var ipcClientSingleton *IPCClient
-var ipcClientOnce struct{}
-
-// GetIPCClient 获取 IPC 客户端单例（线程安全）
-func GetIPCClient() (*IPCClient, error) {
-	if ipcClientSingleton != nil {
-		return ipcClientSingleton, nil
-	}
-	client, err := NewIPCClient()
-	if err != nil {
-		return nil, err
-	}
-	ipcClientSingleton = client
-	return client, nil
-}
-
-// ResetIPCClient 重置 IPC 客户端（用于重新连接）
-func ResetIPCClient() {
-	ipcClientSingleton = nil
 }
 
 // ========== 规则订阅 ==========
@@ -415,15 +391,7 @@ func (c *IPCClient) IPCGetRuleProviders() ([]RuleProviderSubscription, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := json.Marshal(resp.Data)
-	if err != nil {
-		return nil, err
-	}
-	var rps []RuleProviderSubscription
-	if err := json.Unmarshal(data, &rps); err != nil {
-		return nil, fmt.Errorf("解析规则订阅列表失败: %w", err)
-	}
-	return rps, nil
+	return unmarshalData[[]RuleProviderSubscription](resp)
 }
 
 // IPCImportRuleProvider 导入规则订阅

@@ -95,7 +95,7 @@ func NewConnectionsPage(app *tview.Application) tview.Primitive {
 			}
 		}
 		statsText.SetText(fmt.Sprintf(
-			" [yellow]●[-] %d 活跃  |  下载: %s  |  上传: %s",
+			" ['+mihomotui.ColorWarn+']●[-] %d 活跃  |  下载: %s  |  上传: %s",
 			activeCount,
 			formatSize(totalDown),
 			formatSize(totalUp),
@@ -128,9 +128,9 @@ func NewConnectionsPage(app *tview.Application) tview.Primitive {
 				continue
 			}
 
-			activeMarker := "[green]●[-] "
+			activeMarker := "['+mihomotui.ColorOK+']●[-] "
 			if !c.Active {
-				activeMarker = "[gray]○[-] "
+				activeMarker = "['+mihomotui.ColorMuted+']○[-] "
 			}
 
 			table.SetCell(row, 0, tview.NewTableCell(" "+activeMarker+c.Host))
