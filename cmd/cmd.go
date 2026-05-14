@@ -63,3 +63,9 @@ func RunUninstallService() {
 func RunVersion() {
 	fmt.Printf("mihomo-tui %s\n", mihomotui.Version)
 }
+
+// RunCleanup 清理系统代理环境变量和 TUN 路由规则
+func RunCleanup() {
+	mihomotui.CleanupEnvironment()
+	fmt.Println("✅ 环境清理完成")
+}

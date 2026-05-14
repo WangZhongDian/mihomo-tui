@@ -19,6 +19,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  mihomo-tui server [选项]       启动后台 IPC 服务")
 		fmt.Fprintln(os.Stderr, "  mihomo-tui install_service     安装为 systemd 服务（需 root）")
 		fmt.Fprintln(os.Stderr, "  mihomo-tui uninstall           卸载 systemd 服务（需 root）")
+		fmt.Fprintln(os.Stderr, "  mihomo-tui cleanup             清理系统代理和 TUN 环境（需 root）")
 		fmt.Fprintln(os.Stderr, "  mihomo-tui version             显示版本信息")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "选项:")
@@ -42,6 +43,8 @@ func main() {
 		cmd.RunInstallService(*dir)
 	case "uninstall":
 		cmd.RunUninstallService()
+	case "cleanup":
+		cmd.RunCleanup()
 	case "version":
 		cmd.RunVersion()
 	case "help":

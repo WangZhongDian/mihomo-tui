@@ -75,12 +75,65 @@ func (c *Config) clearSystemProxyEnv() error {
 }
 
 func (c *Config) shellConfigFiles() []string {
+	return shellConfigFiles()
+}
+
+func shellConfigFiles() []string {
 	home, _ := os.UserHomeDir()
 	return []string{
 		filepath.Join(home, ".bashrc"),
 		filepath.Join(home, ".zshrc"),
 		filepath.Join(home, ".profile"),
 	}
+}
+
+// CleanupSystemProxyEnv 清理所有 shell 配置文件中的系统代理环境变量标记块。
+// systemd stop/uninstall 以 root 运行，需要遍历 /home/* 和 /root 下所有用户的配置文件。
+func CleanupSystemProxyEnv() error {
+	var allFiles []string
+
+	// 1. root 用户
+	allFiles = append(allFiles,
+		"/root/.bashrc",
+		"/root/.zshrc",
+		"/root/.profile",
+	)
+
+	// 2. /home/* 下所有普通用户
+	entries, err := os.ReadDir("/home")
+	if err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			home := filepath.Join("/home", entry.Name())
+			allFiles = append(allFiles,
+				filepath.Join(home, ".bashrc"),
+				filepath.Join(home, ".zshrc"),
+				filepath.Join(home, ".profile"),
+			)
+		}
+	}
+
+	// 3. 当前用户（兜底，兼容非 root 直接运行 cleanup）
+	home, _ := os.UserHomeDir()
+	if home != "" && home != "/root" && !strings.HasPrefix(home, "/home/") {
+		allFiles = append(allFiles,
+			filepath.Join(home, ".bashrc"),
+			filepath.Join(home, ".zshrc"),
+			filepath.Join(home, ".profile"),
+		)
+	}
+
+	for _, f := range allFiles {
+		if err := removeBlockFromFile(f, sysProxyBlockStart, sysProxyBlockEnd); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			Warnf("清理 %s 失败: %v", f, err)
+		}
+	}
+	return nil
 }
 
 func appendToFile(path, content string) error {
