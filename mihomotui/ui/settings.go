@@ -480,8 +480,8 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 				"版本: v0.1.0\n" +
 				"Go 版本: 1.26.1\n\n" +
 				"为 [" + mihomotui.ColorInfo + "]mihomo[-] 内核开发的终端 UI 配置工具\n\n" +
-				"仓库: github.com/mihomo-tui/mihomo-tui\n\n" +
-				"[" + mihomotui.ColorMuted + "]© 2025 mihomo-tui Team[-]",
+				"仓库: https://github.com/WangZhongDian/mihomo-tui\n\n" +
+				"[" + mihomotui.ColorMuted + "]© 2025 youmetme[-]",
 		))
 	aboutText.SetBorder(true).SetTitle(" 关于 ")
 

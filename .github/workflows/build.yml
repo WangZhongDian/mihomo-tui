@@ -1,11 +1,9 @@
-name: Build
+name: Build and Release
 
 on:
   push:
-    branches: [main, master]
-    tags: ['v*']
-  pull_request:
-    branches: [main, master]
+    tags:
+      - 'v*'
 
 jobs:
   build-linux:
@@ -47,16 +45,31 @@ jobs:
           file "$output"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: mihomo-tui-linux-${{ matrix.arch }}
           path: mihomo-tui-linux-${{ matrix.arch }}
           retention-days: 7
 
-      - name: Upload release asset
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+  release:
+    name: Release
+    needs: build-linux
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
         with:
-          files: mihomo-tui-linux-${{ matrix.arch }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          path: artifacts
+          merge-multiple: true
+
+      - name: Display downloaded files
+        run: ls -la artifacts/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: artifacts/mihomo-tui-linux-*
+          generate_release_notes: true
