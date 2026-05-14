@@ -10,6 +10,7 @@ After=network.target
 Type=simple
 User={{.User}}
 ExecStart={{.ExecPath}} server
+ExecStop={{.ExecPath}} cleanup
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal

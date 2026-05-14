@@ -20,13 +20,15 @@ func InstallService() error {
 		return fmt.Errorf("安装系统服务需要 root 权限，请使用 sudo 运行")
 	}
 
-	// 2. 若服务正在运行，先停止
+	// 2. 若服务正在运行，先停止并清理环境
 	if output, _ := exec.Command("systemctl", "is-active", "mihomo-tui").CombinedOutput(); strings.TrimSpace(string(output)) == "active" {
 		mihomotui.Infof("检测到服务正在运行，先停止...")
 		if output, err := exec.Command("systemctl", "stop", "mihomo-tui").CombinedOutput(); err != nil {
 			return fmt.Errorf("停止现有服务失败: %w, 输出: %s", err, string(output))
 		}
 		mihomotui.Infof("已停止现有服务")
+		// 停止后手动清理环境（ExecStop 可能未触发或已执行）
+		mihomotui.CleanupEnvironment()
 	}
 
 	// 3. 获取当前可执行文件路径
@@ -120,7 +122,7 @@ func UninstallService() error {
 	unitPath := "/etc/systemd/system/mihomo-tui.service"
 	binPath := "/usr/local/bin/mihomo-tui"
 
-	// 2. 若服务正在运行，先停止
+	// 2. 若服务正在运行，先停止并清理环境
 	if output, _ := exec.Command("systemctl", "is-active", "mihomo-tui").CombinedOutput(); strings.TrimSpace(string(output)) == "active" {
 		mihomotui.Infof("检测到服务正在运行，先停止...")
 		if output, err := exec.Command("systemctl", "stop", "mihomo-tui").CombinedOutput(); err != nil {
@@ -128,6 +130,8 @@ func UninstallService() error {
 		}
 		mihomotui.Infof("已停止服务")
 	}
+	// 手动清理环境（systemd stop 已触发 ExecStop，再做一次兜底）
+	mihomotui.CleanupEnvironment()
 
 	// 3. disable 服务
 	if _, err := os.Stat(unitPath); err == nil {

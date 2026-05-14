@@ -143,3 +143,20 @@ func RestoreTUNRouting() error {
 	Infof("[RestoreTUNRouting] TUN 路由规则已清理")
 	return nil
 }
+
+// CleanupEnvironment 停止/卸载时统一清理系统代理环境变量和 TUN 路由规则。
+func CleanupEnvironment() {
+	Infof("[CleanupEnvironment] 开始清理环境...")
+
+	if err := CleanupSystemProxyEnv(); err != nil {
+		Warnf("清理系统代理环境变量失败: %v", err)
+	} else {
+		Infof("[CleanupEnvironment] 系统代理环境变量已清理")
+	}
+
+	if err := RestoreTUNRouting(); err != nil {
+		Warnf("清理 TUN 路由规则失败: %v", err)
+	} else {
+		Infof("[CleanupEnvironment] TUN 路由规则已清理")
+	}
+}
