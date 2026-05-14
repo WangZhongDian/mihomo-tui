@@ -102,14 +102,33 @@ fi
 
 chmod +x "${TMP_BIN}"
 
+# ---------- 检查并停止已有服务 ----------
+# 注意：先下载完再停止，利用旧版服务的代理能力访问 GitHub
+SERVICE_NAME="mihomo-tui"
+SERVICE_WAS_ACTIVE=false
+
+if systemctl list-unit-files --type=service | grep -q "^${SERVICE_NAME}\.service"; then
+    if systemctl is-active --quiet "${SERVICE_NAME}"; then
+        echo ">>> 检测到 ${SERVICE_NAME} 服务正在运行，先停止..."
+        systemctl stop "${SERVICE_NAME}"
+        SERVICE_WAS_ACTIVE=true
+    fi
+fi
+
 # ---------- 安装二进制 ----------
 echo ">>> 安装到 ${INSTALL_DIR} ..."
 cp "${TMP_BIN}" "${INSTALL_DIR}/mihomo-tui"
 chmod +x "${INSTALL_DIR}/mihomo-tui"
 
-# ---------- 安装服务 ----------
+# ---------- 安装/更新服务 ----------
 echo ">>> 安装 systemd 服务..."
 "${INSTALL_DIR}/mihomo-tui" install_service
+
+# ---------- 如果是更新，重启服务 ----------
+if [ "${SERVICE_WAS_ACTIVE}" = true ]; then
+    echo ">>> 重新启动 ${SERVICE_NAME} 服务..."
+    systemctl start "${SERVICE_NAME}"
+fi
 
 # ---------- 清理 ----------
 echo ">>> 清理临时文件..."
