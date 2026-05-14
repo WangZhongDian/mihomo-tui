@@ -47,7 +47,7 @@ jobs:
           file "$output"
 
       - name: Upload artifact
-        uses: actions/gitea-upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mihomo-tui-linux-${{ matrix.arch }}
           path: mihomo-tui-linux-${{ matrix.arch }}
