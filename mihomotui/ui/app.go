@@ -39,7 +39,6 @@ func Run(standalone bool) error {
 	connPage := NewConnectionsPage(app)
 	rulesPage := NewRulesPage(app)
 	logsPage := NewLogsPage(app)
-	testPage := NewTestPage(app)
 	settingsPage := NewSettingsPage(app)
 
 	// 页面管理器
@@ -53,7 +52,6 @@ func Run(standalone bool) error {
 	pages.AddPage("connections", connPage, true, false)
 	pages.AddPage("rules", rulesPage, true, false)
 	pages.AddPage("logs", logsPage, true, false)
-	pages.AddPage("test", testPage, true, false)
 	pages.AddPage("settings", settingsPage, true, false)
 
 	// 页面映射，用于生命周期管理
@@ -64,7 +62,6 @@ func Run(standalone bool) error {
 		"connections":  connPage,
 		"rules":        rulesPage,
 		"logs":         logsPage,
-		"test":         testPage,
 		"settings":     settingsPage,
 	}
 	var currentPage string
@@ -91,7 +88,6 @@ func Run(standalone bool) error {
 		AddItem(" 连接", "", 0, switchPage("connections")).
 		AddItem(" 规则", "", 0, switchPage("rules")).
 		AddItem(" 日志", "", 0, switchPage("logs")).
-		AddItem(" 测试", "", 0, switchPage("test")).
 		AddItem(" 设置", "", 0, switchPage("settings"))
 	navList.SetBorder(true).
 		SetTitle(" 菜单 ").
