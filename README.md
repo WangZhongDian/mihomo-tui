@@ -15,7 +15,15 @@ mihomo-tui is a terminal UI configuration tool for [mihomo](https://github.com/M
 - **TUN Mode** — Support for TUN mode and routing configuration
 - **Log Viewer** — Real-time scrolling logs with filtering and pause support
 - **systemd Service** — Built-in service install/uninstall with auto-start support
+- **Mouse Support** — Clickable buttons, page switching, and node selection via mouse
 - **Dynamic Paging** — Automatically adapts form and proxy list pagination when terminal size changes
+- **TUN Docker Compatibility** — Fixes Docker container packet routing under TUN mode so host ports remain accessible from containers
+
+## Screenshots
+
+| Proxy Page | Rules Page |
+|:----------:|:----------:|
+| ![Proxy Page](docs/proxy.png) | ![Rules Page](docs/rules.png) |
 
 ## System Requirements
 
