@@ -414,6 +414,7 @@ func NewProxyPage(app *tview.Application) tview.Primitive {
 								selectedNode = 0
 								currentPage = 0
 								refreshNodes()
+								// proxy 页面仅浏览节点，不修改默认代理策略配置
 							})
 							if selectedGroup < len(proxyGroups) {
 								groupDropdown.SetCurrentOption(selectedGroup)

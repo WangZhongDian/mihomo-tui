@@ -1,5 +1,7 @@
 package mihomotui
 
+import "strings"
+
 // VersionInfo mihomo 版本信息
 type VersionInfo struct {
 	Meta    bool   `json:"meta"`
@@ -8,15 +10,16 @@ type VersionInfo struct {
 
 // ProxyNode 代理节点
 type ProxyNode struct {
-	Name     string
-	Type     string
-	Delay    int // ms, -1=超时, -2=测试中, -3=未测试
-	Selected bool
+	Name  string
+	Type  string
+	Delay int // ms, -1=超时, -2=测试中, -3=未测试
 }
 
 // ProxyGroup 代理组
 type ProxyGroup struct {
 	Name  string
+	Type  string // Selector / URLTest / Fallback / LoadBalance
+	Now   string // 当前选中的节点名（mihomo API 的 now 字段）
 	Nodes []ProxyNode
 }
 
@@ -82,8 +85,9 @@ type mihomoRulesResponse struct {
 }
 
 func isGroupType(t string) bool {
-	switch t {
-	case "Selector", "URLTest", "Fallback", "LoadBalance":
+	// 支持多种大小写和连字符格式（mihomo API 可能返回 PascalCase 或 kebab-case）
+	switch strings.ToLower(strings.ReplaceAll(t, "-", "")) {
+	case "selector", "select", "urltest", "fallback", "loadbalance":
 		return true
 	}
 	return false

@@ -126,7 +126,7 @@ func (c *MihomoAPI) GetProxyGroups() ([]ProxyGroup, error) {
 		if !isGroupType(proxy.Type) {
 			continue
 		}
-		group := ProxyGroup{Name: name}
+		group := ProxyGroup{Name: name, Type: proxy.Type, Now: proxy.Now}
 		for _, nodeName := range proxy.All {
 			nodeProxy, ok := resp.Proxies[nodeName]
 			if !ok {
@@ -134,10 +134,9 @@ func (c *MihomoAPI) GetProxyGroups() ([]ProxyGroup, error) {
 			}
 			delay := getLatestDelay(nodeProxy.History)
 			group.Nodes = append(group.Nodes, ProxyNode{
-				Name:     nodeName,
-				Type:     nodeProxy.Type,
-				Delay:    delay,
-				Selected: nodeName == proxy.Now,
+				Name:  nodeName,
+				Type:  nodeProxy.Type,
+				Delay: delay,
 			})
 		}
 		// 按延迟排序（低延迟优先，超时/未测试/测试中排最后），相同时按名称

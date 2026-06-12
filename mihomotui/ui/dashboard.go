@@ -73,50 +73,112 @@ func NewDashboard(app *tview.Application) (Page, func()) {
 				return
 			}
 
-			var group *mihomotui.ProxyGroup
-			for _, name := range []string{"GLOBAL", "Auto", "Manual"} {
-				for i := range groups {
-					if groups[i].Name == name {
-						group = &groups[i]
-						break
+			cfg := mihomotui.GlobalConfig()
+			proxyMode := cfg.ProxyMode
+
+			// 构建 group 查找映射
+			groupMap := make(map[string]*mihomotui.ProxyGroup, len(groups))
+			for i := range groups {
+				groupMap[groups[i].Name] = &groups[i]
+			}
+
+			var text string
+
+			switch proxyMode {
+			case "direct":
+				text = fmt.Sprintf(
+					" [%s::b]●[-:-:-] 直连模式\n"+
+						"    所有流量直接连接，不经过代理",
+					mihomotui.ColorOK,
+				)
+			case "global":
+				group := groupMap["GLOBAL"]
+				if group != nil && len(group.Nodes) > 0 {
+					var activeNode *mihomotui.ProxyNode
+					if group.Now != "" {
+						for i := range group.Nodes {
+							if group.Nodes[i].Name == group.Now {
+								activeNode = &group.Nodes[i]
+								break
+							}
+						}
+					}
+					if activeNode == nil {
+						activeNode = &group.Nodes[0]
+					}
+					delayColor := DelayColor(activeNode.Delay)
+					delayText := DelayText(activeNode.Delay)
+					text = fmt.Sprintf(
+						" [%s::b]●[-:-:-] %s\n"+
+							"    %s\n\n"+
+							" 代理组: [::u]%s[-:-:-]\n\n"+
+							" 节点: [%s]●[-] %s [%s]%s[-]",
+						mihomotui.ColorOK, activeNode.Name, activeNode.Type, group.Name,
+						mihomotui.ColorOK, activeNode.Name, delayColor, delayText,
+					)
+				} else {
+					text = fmt.Sprintf(
+						" [%s::b]●[-:-:-] 全局模式\n"+
+							"    暂无可用节点",
+						mihomotui.ColorOK,
+					)
+				}
+			default: // rule 及其他模式
+				groupName := cfg.DefaultProxyGroup
+				group := groupMap[groupName]
+				if group == nil && len(groups) > 0 {
+					// fallback：优先找 Selector 或 URLTest
+					for i := range groups {
+						if groups[i].Type == "Selector" || groups[i].Type == "URLTest" {
+							group = &groups[i]
+							break
+						}
 					}
 				}
-				if group != nil {
-					break
+				if group == nil {
+					return
+				}
+
+				// Fallback / LoadBalance 不显示当前节点
+				if group.Type == "Fallback" || group.Type == "LoadBalance" {
+					text = fmt.Sprintf(
+						" [%s::b]●[-:-:-] %s\n"+
+							"    %s\n\n"+
+							" 代理组: [::u]%s[-:-:-]\n\n"+
+							" 模式: 自动切换（%s）",
+						mihomotui.ColorOK, group.Name, group.Type, group.Name,
+						group.Type,
+					)
+				} else {
+					var activeNode *mihomotui.ProxyNode
+					if group.Now != "" {
+						for i := range group.Nodes {
+							if group.Nodes[i].Name == group.Now {
+								activeNode = &group.Nodes[i]
+								break
+							}
+						}
+					}
+					if activeNode == nil && len(group.Nodes) > 0 {
+						activeNode = &group.Nodes[0]
+					}
+					if activeNode == nil {
+						return
+					}
+
+					delayColor := DelayColor(activeNode.Delay)
+					delayText := DelayText(activeNode.Delay)
+
+					text = fmt.Sprintf(
+						" [%s::b]●[-:-:-] %s\n"+
+							"    %s\n\n"+
+							" 代理组: [::u]%s[-:-:-]\n\n"+
+							" 节点: [%s]●[-] %s [%s]%s[-]",
+						mihomotui.ColorOK, activeNode.Name, activeNode.Type, group.Name,
+						mihomotui.ColorOK, activeNode.Name, delayColor, delayText,
+					)
 				}
 			}
-			if group == nil && len(groups) > 0 {
-				group = &groups[0]
-			}
-			if group == nil {
-				return
-			}
-
-			var activeNode *mihomotui.ProxyNode
-			for i := range group.Nodes {
-				if group.Nodes[i].Selected {
-					activeNode = &group.Nodes[i]
-					break
-				}
-			}
-			if activeNode == nil && len(group.Nodes) > 0 {
-				activeNode = &group.Nodes[0]
-			}
-			if activeNode == nil {
-				return
-			}
-
-			delayColor := DelayColor(activeNode.Delay)
-			delayText := DelayText(activeNode.Delay)
-
-			text := fmt.Sprintf(
-				" [%s::b]●[-:-:-] %s\n"+
-					"    %s\n\n"+
-					" 代理组: [::u]%s[-:-:-]\n\n"+
-					" 节点: [%s]●[-] %s [%s]%s[-]",
-				mihomotui.ColorOK, activeNode.Name, activeNode.Type, group.Name,
-				mihomotui.ColorOK, activeNode.Name, delayColor, delayText,
-			)
 
 			app.QueueUpdateDraw(func() {
 				nodeCard.SetText(text)
