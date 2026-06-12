@@ -292,8 +292,11 @@ func LoadConfig() Config {
 	if cfg.LogLevel == "" {
 		cfg.LogLevel = "info"
 	}
+	if cfg.DefaultProxyGroup == "" {
+		cfg.DefaultProxyGroup = "Auto"
+	}
 
-	Infof("配置加载完成: dir=%s subs=%d active=%d mode=%s", GetConfigDir(), len(cfg.Subscriptions), cfg.ActiveSubscription, cfg.ProxyMode)
+	Infof("配置加载完成: dir=%s subs=%d active=%d mode=%s default_group=%s", GetConfigDir(), len(cfg.Subscriptions), cfg.ActiveSubscription, cfg.ProxyMode, cfg.DefaultProxyGroup)
 	return cfg
 }
 
