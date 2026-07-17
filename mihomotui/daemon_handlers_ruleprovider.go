@@ -56,45 +56,46 @@ func (d *Daemon) importRuleProvider(req RuleProviderImportRequest) error {
 		proxyGroup = "Auto"
 	}
 
-	d.mu.Lock()
-	cfg := GlobalConfig()
-	// 同名规则订阅表示更新，避免重复导入后产生不稳定的“规则订阅2”等名称。
-	idx := cfg.FindRuleProviderByName(name)
-	if idx < 0 {
-		name = uniqueRuleProviderName(name, cfg)
-	}
-	now := time.Now().Format(TimeFormatShort)
-	if idx >= 0 {
-		cfg.RuleProviderSubscriptions[idx].URL = req.URL
-		cfg.RuleProviderSubscriptions[idx].Behavior = behavior
-		cfg.RuleProviderSubscriptions[idx].Format = format
-		cfg.RuleProviderSubscriptions[idx].Interval = interval
-		cfg.RuleProviderSubscriptions[idx].ProxyGroup = proxyGroup
-		cfg.RuleProviderSubscriptions[idx].UpdatedAt = now
-		cfg.RuleProviderSubscriptions[idx].LastSuccessAt = now
-		cfg.RuleProviderSubscriptions[idx].LastFailureAt = ""
-		cfg.RuleProviderSubscriptions[idx].LastError = ""
-	} else {
-		cfg.RuleProviderSubscriptions = append(cfg.RuleProviderSubscriptions, RuleProviderSubscription{
-			Name:          name,
-			URL:           req.URL,
-			Behavior:      behavior,
-			Format:        format,
-			Interval:      interval,
-			ProxyGroup:    proxyGroup,
-			UpdatedAt:     now,
-			LastSuccessAt: now,
-		})
-	}
-	shouldApply := hasUsableProxySubscription(cfg)
-	if err := cfg.Flush(); err != nil {
-		d.mu.Unlock()
+	// 原子提交规则订阅变更。同名规则订阅表示更新，避免重复导入后
+	// 产生不稳定的“规则订阅2”等名称。
+	var shouldApply bool
+	_, err = UpdateGlobalConfig(func(cfg *Config) error {
+		idx := cfg.FindRuleProviderByName(name)
+		if idx < 0 {
+			name = uniqueRuleProviderName(name, cfg)
+		}
+		now := time.Now().Format(TimeFormatShort)
+		if idx >= 0 {
+			cfg.RuleProviderSubscriptions[idx].URL = req.URL
+			cfg.RuleProviderSubscriptions[idx].Behavior = behavior
+			cfg.RuleProviderSubscriptions[idx].Format = format
+			cfg.RuleProviderSubscriptions[idx].Interval = interval
+			cfg.RuleProviderSubscriptions[idx].ProxyGroup = proxyGroup
+			cfg.RuleProviderSubscriptions[idx].UpdatedAt = now
+			cfg.RuleProviderSubscriptions[idx].LastSuccessAt = now
+			cfg.RuleProviderSubscriptions[idx].LastFailureAt = ""
+			cfg.RuleProviderSubscriptions[idx].LastError = ""
+		} else {
+			cfg.RuleProviderSubscriptions = append(cfg.RuleProviderSubscriptions, RuleProviderSubscription{
+				Name:          name,
+				URL:           req.URL,
+				Behavior:      behavior,
+				Format:        format,
+				Interval:      interval,
+				ProxyGroup:    proxyGroup,
+				UpdatedAt:     now,
+				LastSuccessAt: now,
+			})
+		}
+		shouldApply = hasUsableProxySubscription(cfg)
+		return nil
+	})
+	if err != nil {
 		return fmt.Errorf("保存规则订阅失败: %w", err)
 	}
-	d.mu.Unlock()
 	if shouldApply {
-		if err := d.regenerateAndReloadMihomoConfig(); err != nil {
-			return fmt.Errorf("规则订阅导入成功，但应用新配置失败: %w", err)
+		if report := d.reconcileLatest("ruleprovider-import"); !report.Applied {
+			return fmt.Errorf("规则订阅导入成功，但应用新配置失败: %s", report.Err)
 		}
 	}
 	Infof("规则订阅导入成功: name=%s url=%s behavior=%s", name, RedactURL(req.URL), behavior)
@@ -102,50 +103,48 @@ func (d *Daemon) importRuleProvider(req RuleProviderImportRequest) error {
 }
 
 func (d *Daemon) refreshRuleProvider(name string) error {
-	d.mu.RLock()
 	cfg := GlobalConfig()
 	idx := cfg.FindRuleProviderByName(name)
 	if idx < 0 {
-		d.mu.RUnlock()
 		return fmt.Errorf("规则订阅不存在: %s", name)
 	}
 	rp := cfg.RuleProviderSubscriptions[idx]
-	d.mu.RUnlock()
 
 	_, fetchErr := fetchRuleProvider(rp.URL)
-	d.mu.Lock()
-	cfg = GlobalConfig()
-	idx = cfg.FindRuleProviderByName(name)
-	if idx < 0 {
-		d.mu.Unlock()
-		return fmt.Errorf("规则订阅在刷新期间已被删除: %s", name)
-	}
-	if fetchErr != nil {
-		cfg.RuleProviderSubscriptions[idx].LastError = fetchErr.Error()
-		cfg.RuleProviderSubscriptions[idx].LastFailureAt = time.Now().Format(TimeFormatShort)
-		if err := cfg.Flush(); err != nil {
-			d.mu.Unlock()
+	var shouldApply bool
+	_, err := UpdateGlobalConfig(func(cfg *Config) error {
+		idx := cfg.FindRuleProviderByName(name)
+		if idx < 0 {
+			return fmt.Errorf("规则订阅在刷新期间已被删除: %s", name)
+		}
+		now := time.Now().Format(TimeFormatShort)
+		if fetchErr != nil {
+			cfg.RuleProviderSubscriptions[idx].LastError = fetchErr.Error()
+			cfg.RuleProviderSubscriptions[idx].LastFailureAt = now
+			return nil
+		}
+		cfg.RuleProviderSubscriptions[idx].UpdatedAt = now
+		cfg.RuleProviderSubscriptions[idx].LastSuccessAt = now
+		cfg.RuleProviderSubscriptions[idx].LastError = ""
+		cfg.RuleProviderSubscriptions[idx].LastFailureAt = ""
+		shouldApply = hasUsableProxySubscription(cfg)
+		return nil
+	})
+	if err != nil {
+		if fetchErr != nil {
 			return fmt.Errorf("刷新失败且保存错误状态失败: %w", err)
 		}
-		d.mu.Unlock()
+		return err
+	}
+	if fetchErr != nil {
 		Warnf("规则订阅刷新失败: name=%s url=%s err=%v", name, RedactURL(rp.URL), fetchErr)
 		return fetchErr
 	}
-	now := time.Now().Format(TimeFormatShort)
-	cfg.RuleProviderSubscriptions[idx].UpdatedAt = now
-	cfg.RuleProviderSubscriptions[idx].LastSuccessAt = now
-	cfg.RuleProviderSubscriptions[idx].LastError = ""
-	cfg.RuleProviderSubscriptions[idx].LastFailureAt = ""
-	if err := cfg.Flush(); err != nil {
-		d.mu.Unlock()
-		return fmt.Errorf("保存规则订阅刷新结果失败: %w", err)
-	}
-	d.mu.Unlock()
 
 	// 没有可用代理订阅时，规则订阅只能更新元数据；此时尚不存在可生成的 mihomo 配置。
-	if hasUsableProxySubscription(cfg) {
-		if err := d.regenerateAndReloadMihomoConfig(); err != nil {
-			return fmt.Errorf("规则订阅刷新成功，但应用新配置失败: %w", err)
+	if shouldApply {
+		if report := d.reconcileLatest("ruleprovider-refresh"); !report.Applied {
+			return fmt.Errorf("规则订阅刷新成功，但应用新配置失败: %s", report.Err)
 		}
 	}
 	Infof("规则订阅刷新成功: name=%s url=%s", name, RedactURL(rp.URL))
@@ -167,14 +166,22 @@ func (d *Daemon) handleRuleProviderDetail(w http.ResponseWriter, r *http.Request
 		}
 		writeJSON(w, http.StatusOK, ok("规则订阅已刷新"))
 	case http.MethodDelete:
-		d.mu.Lock()
-		cfg := GlobalConfig()
-		if err := cfg.RemoveRuleProvider(name); err != nil {
-			d.mu.Unlock()
-			writeError(w, http.StatusNotFound, err)
+		removed := false
+		_, err := UpdateGlobalConfig(func(cfg *Config) error {
+			if cfg.FindRuleProviderByName(name) < 0 {
+				return fmt.Errorf("规则订阅不存在: %s", name)
+			}
+			removed = true
+			return cfg.RemoveRuleProvider(name)
+		})
+		if err != nil {
+			if !removed {
+				writeError(w, http.StatusNotFound, err)
+			} else {
+				writeError(w, http.StatusInternalServerError, fmt.Errorf("保存规则订阅变更失败: %w", err))
+			}
 			return
 		}
-		d.mu.Unlock()
 		Infof("规则订阅已删除: name=%s", name)
 		writeJSON(w, http.StatusOK, ok(nil))
 	default:

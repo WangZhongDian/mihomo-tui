@@ -248,10 +248,14 @@ func DownloadMihomo(version string, onProgress func(percent int, status string))
 	}
 	Infof("mihomo 安装完成: %s", installPath)
 
-	// 将安装路径写入配置，便于守护进程后续定位（解决分体启动时用户目录隔离问题）
-	cfg := GlobalConfig()
-	cfg.MihomoBinaryPath = installPath
-	_ = cfg.Flush()
+	// 将安装路径写入配置，便于守护进程后续定位（解决分体启动时用户目录隔离问题）；
+	// 通过原子提交持久化，失败时内存与磁盘保持一致。
+	if _, err := UpdateGlobalConfig(func(cfg *Config) error {
+		cfg.MihomoBinaryPath = installPath
+		return nil
+	}); err != nil {
+		Warnf("保存 mihomo 安装路径失败: %v", err)
+	}
 
 	if onProgress != nil {
 		onProgress(100, "done")

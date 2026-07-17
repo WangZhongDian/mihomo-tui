@@ -20,6 +20,11 @@ type Daemon struct {
 	mihomoAPI       *MihomoAPI
 	mihomoProcess   *MihomoProcess
 	upgradeProgress UpgradeProgress
+
+	// 配置应用串行化（P1）：所有运行时应用任务经 reconcileCh 排队逐个执行。
+	reconcileOnce  sync.Once
+	reconcileCh    chan reconcileRequest
+	reconcileApply reconcileApplyFunc // 测试注入点；为 nil 时使用 runReconcile
 }
 
 // RunDaemon 启动 IPC 后台服务
@@ -47,12 +52,19 @@ func (d *Daemon) Run() error {
 	cfg := GlobalConfig()
 	Infof("守护进程启动，配置目录: %s", configDir)
 
-	// 确保 API secret 已设置（mihomo external-controller 需要认证）
+	// 确保 API secret 已设置（mihomo external-controller 需要认证）；
+	// 通过原子提交持久化，失败时内存与磁盘保持一致。
 	if cfg.Mihomo.Secret == "" {
-		cfg.Mihomo.Secret = generateRandomSecret()
-		if err := cfg.Flush(); err != nil {
+		committed, err := UpdateGlobalConfig(func(c *Config) error {
+			if c.Mihomo.Secret == "" {
+				c.Mihomo.Secret = generateRandomSecret()
+			}
+			return nil
+		})
+		if err != nil {
 			Warnf("保存 API secret 失败: %v", err)
 		} else {
+			cfg = &committed
 			Infof("已生成 API secret")
 		}
 	}

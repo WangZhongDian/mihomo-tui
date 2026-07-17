@@ -58,55 +58,57 @@ func (d *Daemon) importSubscription(requestedName, rawURL string) error {
 		return err
 	}
 
-	d.mu.Lock()
-	cfg := GlobalConfig()
+	// 原子提交订阅变更：克隆 → 修改 → 校验 → 落盘 → 替换内存。
 	// 显式指定的名称按“更新同名订阅”处理；未指定名称时按 URL 去重，
 	// 避免重复导入生成不断递增的临时名称，同时保持已有订阅 ID 稳定。
-	name := strings.TrimSpace(requestedName)
-	idx := -1
-	if name != "" {
-		idx = cfg.FindSubscriptionByName(name)
-	}
-	if idx < 0 {
-		idx = findSubscriptionByURL(cfg, rawURL)
-	}
-	if idx >= 0 {
-		name = cfg.Subscriptions[idx].Name
-	} else {
-		name = uniqueSubscriptionName(name, rawURL, cfg)
-	}
+	var name string
+	var active bool
+	_, err = UpdateGlobalConfig(func(cfg *Config) error {
+		name = strings.TrimSpace(requestedName)
+		idx := -1
+		if name != "" {
+			idx = cfg.FindSubscriptionByName(name)
+		}
+		if idx < 0 {
+			idx = findSubscriptionByURL(cfg, rawURL)
+		}
+		if idx >= 0 {
+			name = cfg.Subscriptions[idx].Name
+		} else {
+			name = uniqueSubscriptionName(name, rawURL, cfg)
+		}
 
-	now := time.Now().Format(TimeFormatShort)
-	if idx >= 0 {
-		cfg.Subscriptions[idx].URL = rawURL
-		cfg.Subscriptions[idx].UpdatedAt = now
-		cfg.Subscriptions[idx].LastSuccessAt = now
-		cfg.Subscriptions[idx].LastError = ""
-		cfg.Subscriptions[idx].LastFailureAt = ""
-		cfg.Subscriptions[idx].UsedGB = result.UsedGB
-		cfg.Subscriptions[idx].TotalGB = result.TotalGB
-	} else {
-		cfg.Subscriptions = append(cfg.Subscriptions, SubscriptionMeta{
-			ID:            newSubscriptionID(),
-			Name:          name,
-			URL:           rawURL,
-			UpdatedAt:     now,
-			LastSuccessAt: now,
-			UsedGB:        result.UsedGB,
-			TotalGB:       result.TotalGB,
-		})
-		idx = len(cfg.Subscriptions) - 1
-	}
-	active := cfg.ActiveSubscription == idx
-	if err := cfg.Flush(); err != nil {
-		d.mu.Unlock()
+		now := time.Now().Format(TimeFormatShort)
+		if idx >= 0 {
+			cfg.Subscriptions[idx].URL = rawURL
+			cfg.Subscriptions[idx].UpdatedAt = now
+			cfg.Subscriptions[idx].LastSuccessAt = now
+			cfg.Subscriptions[idx].LastError = ""
+			cfg.Subscriptions[idx].LastFailureAt = ""
+			cfg.Subscriptions[idx].UsedGB = result.UsedGB
+			cfg.Subscriptions[idx].TotalGB = result.TotalGB
+		} else {
+			cfg.Subscriptions = append(cfg.Subscriptions, SubscriptionMeta{
+				ID:            newSubscriptionID(),
+				Name:          name,
+				URL:           rawURL,
+				UpdatedAt:     now,
+				LastSuccessAt: now,
+				UsedGB:        result.UsedGB,
+				TotalGB:       result.TotalGB,
+			})
+			idx = len(cfg.Subscriptions) - 1
+		}
+		active = cfg.ActiveSubscription == idx
+		return nil
+	})
+	if err != nil {
 		return fmt.Errorf("保存订阅失败: %w", err)
 	}
-	d.mu.Unlock()
 
 	if active {
-		if err := d.regenerateAndReloadMihomoConfig(); err != nil {
-			return fmt.Errorf("订阅导入成功，但应用新配置失败: %w", err)
+		if report := d.reconcileLatest("subscription-import"); !report.Applied {
+			return fmt.Errorf("订阅导入成功，但应用新配置失败: %s", report.Err)
 		}
 	}
 	Infof("订阅导入成功: name=%s url=%s", name, RedactURL(rawURL))
@@ -118,18 +120,17 @@ func (d *Daemon) createManualSubscription(requestedName string) error {
 	if name == "" {
 		name = "手动配置"
 	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	cfg := GlobalConfig()
-	name = uniqueSubscriptionName(name, "", cfg)
-	now := time.Now().Format(TimeFormatShort)
-	cfg.Subscriptions = append(cfg.Subscriptions, SubscriptionMeta{
-		ID:        newSubscriptionID(),
-		Name:      name,
-		URL:       "手动配置",
-		UpdatedAt: now,
+	_, err := UpdateGlobalConfig(func(cfg *Config) error {
+		name = uniqueSubscriptionName(name, "", cfg)
+		cfg.Subscriptions = append(cfg.Subscriptions, SubscriptionMeta{
+			ID:        newSubscriptionID(),
+			Name:      name,
+			URL:       "手动配置",
+			UpdatedAt: time.Now().Format(TimeFormatShort),
+		})
+		return nil
 	})
-	if err := cfg.Flush(); err != nil {
+	if err != nil {
 		return fmt.Errorf("保存手动订阅失败: %w", err)
 	}
 	Infof("已创建手动订阅: name=%s", name)
@@ -137,57 +138,56 @@ func (d *Daemon) createManualSubscription(requestedName string) error {
 }
 
 func (d *Daemon) refreshSubscription(name string) error {
-	d.mu.RLock()
 	cfg := GlobalConfig()
 	idx := cfg.FindSubscriptionByIdentifier(name)
 	if idx < 0 {
-		d.mu.RUnlock()
 		return fmt.Errorf("订阅不存在: %s", name)
 	}
 	sub := cfg.Subscriptions[idx]
 	resolvedName := sub.Name
-	d.mu.RUnlock()
 	if sub.URL == "" || sub.URL == "手动配置" {
 		return fmt.Errorf("手动配置不能从远端刷新")
 	}
 
+	// 网络请求在提交前完成；提交时按标识符重新定位订阅，
+	// 避免刷新期间订阅被删除导致的索引错乱。
 	result, fetchErr := fetchSubscription(sub.URL)
-	d.mu.Lock()
-	cfg = GlobalConfig()
-	idx = cfg.FindSubscriptionByIdentifier(name)
-	if idx < 0 {
-		d.mu.Unlock()
-		return fmt.Errorf("订阅在刷新期间已被删除: %s", resolvedName)
-	}
-	if fetchErr != nil {
-		cfg.Subscriptions[idx].LastError = fetchErr.Error()
-		cfg.Subscriptions[idx].LastFailureAt = time.Now().Format(TimeFormatShort)
-		if err := cfg.Flush(); err != nil {
-			d.mu.Unlock()
+	var active bool
+	_, err := UpdateGlobalConfig(func(cfg *Config) error {
+		idx := cfg.FindSubscriptionByIdentifier(name)
+		if idx < 0 {
+			return fmt.Errorf("订阅在刷新期间已被删除: %s", resolvedName)
+		}
+		now := time.Now().Format(TimeFormatShort)
+		if fetchErr != nil {
+			// 刷新失败同样提交错误状态，便于 UI 展示失败时间与原因
+			cfg.Subscriptions[idx].LastError = fetchErr.Error()
+			cfg.Subscriptions[idx].LastFailureAt = now
+			return nil
+		}
+		cfg.Subscriptions[idx].UpdatedAt = now
+		cfg.Subscriptions[idx].LastSuccessAt = now
+		cfg.Subscriptions[idx].LastError = ""
+		cfg.Subscriptions[idx].LastFailureAt = ""
+		cfg.Subscriptions[idx].UsedGB = result.UsedGB
+		cfg.Subscriptions[idx].TotalGB = result.TotalGB
+		active = cfg.ActiveSubscription == idx
+		return nil
+	})
+	if err != nil {
+		if fetchErr != nil {
 			return fmt.Errorf("刷新失败且保存错误状态失败: %w", err)
 		}
-		d.mu.Unlock()
+		return err
+	}
+	if fetchErr != nil {
 		Warnf("订阅刷新失败: name=%s url=%s err=%v", resolvedName, RedactURL(sub.URL), fetchErr)
 		return fetchErr
 	}
 
-	now := time.Now().Format(TimeFormatShort)
-	cfg.Subscriptions[idx].UpdatedAt = now
-	cfg.Subscriptions[idx].LastSuccessAt = now
-	cfg.Subscriptions[idx].LastError = ""
-	cfg.Subscriptions[idx].LastFailureAt = ""
-	cfg.Subscriptions[idx].UsedGB = result.UsedGB
-	cfg.Subscriptions[idx].TotalGB = result.TotalGB
-	active := cfg.ActiveSubscription == idx
-	if err := cfg.Flush(); err != nil {
-		d.mu.Unlock()
-		return fmt.Errorf("保存刷新结果失败: %w", err)
-	}
-	d.mu.Unlock()
-
 	if active {
-		if err := d.regenerateAndReloadMihomoConfig(); err != nil {
-			return fmt.Errorf("订阅刷新成功，但应用新配置失败: %w", err)
+		if report := d.reconcileLatest("subscription-refresh"); !report.Applied {
+			return fmt.Errorf("订阅刷新成功，但应用新配置失败: %s", report.Err)
 		}
 	}
 	Infof("订阅刷新成功: name=%s url=%s", resolvedName, RedactURL(sub.URL))
@@ -213,21 +213,23 @@ func (d *Daemon) handleSubscriptionDetail(w http.ResponseWriter, r *http.Request
 		}
 		writeJSON(w, http.StatusOK, ok("订阅已刷新"))
 	case http.MethodDelete:
-		d.mu.Lock()
-		cfg := GlobalConfig()
-		idx := cfg.FindSubscriptionByIdentifier(name)
-		if idx < 0 {
-			d.mu.Unlock()
-			writeError(w, http.StatusNotFound, fmt.Errorf("订阅不存在: %s", name))
+		var resolvedName string
+		_, err := UpdateGlobalConfig(func(cfg *Config) error {
+			idx := cfg.FindSubscriptionByIdentifier(name)
+			if idx < 0 {
+				return fmt.Errorf("订阅不存在: %s", name)
+			}
+			resolvedName = cfg.Subscriptions[idx].Name
+			return cfg.RemoveSubscription(resolvedName)
+		})
+		if err != nil {
+			if resolvedName == "" {
+				writeError(w, http.StatusNotFound, err)
+			} else {
+				writeError(w, http.StatusInternalServerError, fmt.Errorf("保存订阅变更失败: %w", err))
+			}
 			return
 		}
-		resolvedName := cfg.Subscriptions[idx].Name
-		if err := cfg.RemoveSubscription(resolvedName); err != nil {
-			d.mu.Unlock()
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-		d.mu.Unlock()
 		Infof("订阅已删除: name=%s", resolvedName)
 		writeJSON(w, http.StatusOK, ok(nil))
 	case http.MethodPost:
@@ -235,56 +237,32 @@ func (d *Daemon) handleSubscriptionDetail(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusBadRequest, fmt.Errorf("未知操作: %s", action))
 			return
 		}
-		d.mu.Lock()
-		cfg := GlobalConfig()
-		idx := cfg.FindSubscriptionByIdentifier(name)
-		if idx < 0 {
-			d.mu.Unlock()
-			writeError(w, http.StatusBadRequest, fmt.Errorf("订阅不存在: %s", name))
+		var resolvedName string
+		_, err := UpdateGlobalConfig(func(cfg *Config) error {
+			idx := cfg.FindSubscriptionByIdentifier(name)
+			if idx < 0 {
+				return fmt.Errorf("订阅不存在: %s", name)
+			}
+			resolvedName = cfg.Subscriptions[idx].Name
+			return cfg.SetActiveSubscription(resolvedName)
+		})
+		if err != nil {
+			if resolvedName == "" {
+				writeError(w, http.StatusNotFound, err)
+			} else {
+				writeError(w, http.StatusInternalServerError, fmt.Errorf("保存订阅变更失败: %w", err))
+			}
 			return
 		}
-		resolvedName := cfg.Subscriptions[idx].Name
-		if err := cfg.SetActiveSubscription(resolvedName); err != nil {
-			d.mu.Unlock()
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-		d.mihomoAPI = NewMihomoAPIFromConfig()
-		d.mu.Unlock()
-		if err := d.regenerateAndReloadMihomoConfig(); err != nil {
-			writeError(w, http.StatusInternalServerError, fmt.Errorf("应用订阅失败: %w", err))
+		// mihomo API 客户端由 reconcile 流程按最新配置重建
+		if report := d.reconcileLatest("subscription-apply"); !report.Applied {
+			writeError(w, http.StatusInternalServerError, fmt.Errorf("应用订阅失败: %s", report.Err))
 			return
 		}
 		writeJSON(w, http.StatusOK, ok(nil))
 	default:
 		writeError(w, http.StatusMethodNotAllowed, fmt.Errorf("方法不允许"))
 	}
-}
-
-func (d *Daemon) regenerateAndReloadMihomoConfig() error {
-	d.mu.Lock()
-	cfg := GlobalConfig()
-	if err := cfg.GenerateMihomoConfig(); err != nil {
-		d.mu.Unlock()
-		return fmt.Errorf("生成 mihomo 配置失败: %w", err)
-	}
-	api := d.mihomoAPI
-	process := d.mihomoProcess
-	d.mu.Unlock()
-
-	if process == nil || !process.IsRunning() {
-		return nil
-	}
-	if api == nil {
-		return fmt.Errorf("mihomo API 客户端未初始化")
-	}
-	if err := api.ReloadConfigs(true); err != nil {
-		Warnf("热重载 mihomo 失败，尝试重启: %v", err)
-		if err := process.Restart(); err != nil {
-			return fmt.Errorf("热重载失败且重启失败: %w", err)
-		}
-	}
-	return nil
 }
 
 func hasUsableProxySubscription(cfg *Config) bool {

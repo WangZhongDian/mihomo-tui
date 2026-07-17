@@ -81,6 +81,9 @@ type RuleProviderSubscription struct {
 
 // Config 全局配置
 type Config struct {
+	// Version 配置版本号，每次成功提交（校验 + 落盘 + 替换内存）递增。
+	// 客户端基于读取到的版本提交整份配置，daemon 借此检测陈旧客户端的并发覆盖。
+	Version                   int64                      `yaml:"version" json:"version"`
 	MihomoConfigPath          string                     `yaml:"mihomo_config_path"`
 	MihomoBinaryPath          string                     `yaml:"mihomo_binary_path"`
 	System                    SystemConfig               `yaml:"system"`
@@ -114,14 +117,19 @@ func init() {
 	_ = InitLogger(globalConfig.LogDir, globalConfig.LogLevel)
 }
 
-// GlobalConfig 返回全局配置单例（线程安全）
+// GlobalConfig 返回全局配置的只读快照（深拷贝指针，线程安全）。
+// 调用方可以自由修改返回值，不会影响全局状态；
+// 需要修改全局配置时必须使用 UpdateGlobalConfig / ReplaceGlobalConfig，
+// 以保证"修改 → 校验 → 落盘 → 替换内存"的原子提交语义。
 func GlobalConfig() *Config {
 	configMu.RLock()
 	defer configMu.RUnlock()
-	return &globalConfig
+	cp := globalConfig.Clone()
+	return &cp
 }
 
-// SetGlobalConfig 更新全局配置单例（线程安全）
+// SetGlobalConfig 直接替换内存中的全局配置（线程安全），不做校验、不落盘、不递增版本。
+// 仅用于客户端缓存同步与测试；daemon 提交配置必须使用 UpdateGlobalConfig / ReplaceGlobalConfig。
 func SetGlobalConfig(cfg Config) {
 	configMu.Lock()
 	defer configMu.Unlock()
@@ -294,6 +302,13 @@ func LoadConfig() Config {
 			cfg.Subscriptions[i].ID = newSubscriptionID()
 		}
 	}
+	// 自愈：活动订阅索引越界时收敛到合法范围，避免后续提交校验失败。
+	if cfg.ActiveSubscription >= len(cfg.Subscriptions) {
+		cfg.ActiveSubscription = len(cfg.Subscriptions) - 1
+	}
+	if cfg.ActiveSubscription < -1 {
+		cfg.ActiveSubscription = -1
+	}
 
 	// 确保路径字段非空
 	if cfg.MihomoConfigPath == "" {
@@ -413,7 +428,7 @@ func (c *Config) FindSubscriptionByIdentifier(identifier string) int {
 	return c.FindSubscriptionByName(identifier)
 }
 
-// AddSubscription 添加订阅
+// AddSubscription 添加订阅（仅修改内存；持久化由 UpdateGlobalConfig 提交）
 func (c *Config) AddSubscription(name, url string) error {
 	if name == "" {
 		return fmt.Errorf("订阅名称不能为空")
@@ -431,10 +446,10 @@ func (c *Config) AddSubscription(name, url string) error {
 		})
 	}
 
-	return c.Flush()
+	return nil
 }
 
-// RemoveSubscription 删除订阅
+// RemoveSubscription 删除订阅（仅修改内存；持久化由 UpdateGlobalConfig 提交）
 func (c *Config) RemoveSubscription(name string) error {
 	idx := c.FindSubscriptionByName(name)
 	if idx < 0 {
@@ -459,17 +474,17 @@ func (c *Config) RemoveSubscription(name string) error {
 		c.ActiveSubscription = len(c.Subscriptions) - 1
 	}
 
-	return c.Flush()
+	return nil
 }
 
-// SetActiveSubscription 设置当前激活订阅
+// SetActiveSubscription 设置当前激活订阅（仅修改内存；持久化由 UpdateGlobalConfig 提交）
 func (c *Config) SetActiveSubscription(name string) error {
 	idx := c.FindSubscriptionByName(name)
 	if idx < 0 {
 		return fmt.Errorf("订阅不存在: %s", name)
 	}
 	c.ActiveSubscription = idx
-	return c.Flush()
+	return nil
 }
 
 // SortSubscriptions 按名称排序订阅列表
@@ -491,7 +506,7 @@ func (c *Config) FindRuleProviderByName(name string) int {
 	return -1
 }
 
-// AddRuleProvider 添加规则订阅
+// AddRuleProvider 添加规则订阅（仅修改内存；持久化由 UpdateGlobalConfig 提交）
 func (c *Config) AddRuleProvider(name, url, behavior, format, proxyGroup string, interval int) error {
 	if name == "" {
 		return fmt.Errorf("规则订阅名称不能为空")
@@ -532,10 +547,10 @@ func (c *Config) AddRuleProvider(name, url, behavior, format, proxyGroup string,
 		})
 	}
 
-	return c.Flush()
+	return nil
 }
 
-// RemoveRuleProvider 删除规则订阅
+// RemoveRuleProvider 删除规则订阅（仅修改内存；持久化由 UpdateGlobalConfig 提交）
 func (c *Config) RemoveRuleProvider(name string) error {
 	idx := c.FindRuleProviderByName(name)
 	if idx < 0 {
@@ -543,5 +558,5 @@ func (c *Config) RemoveRuleProvider(name string) error {
 	}
 
 	c.RuleProviderSubscriptions = append(c.RuleProviderSubscriptions[:idx], c.RuleProviderSubscriptions[idx+1:]...)
-	return c.Flush()
+	return nil
 }

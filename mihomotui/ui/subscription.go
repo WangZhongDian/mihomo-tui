@@ -157,7 +157,7 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 					return
 				}
 				cfg = cfg2
-				mihomotui.SetGlobalConfig(*cfg2)
+				mihomotui.SyncConfigFromServer(cfg2)
 				mihomotui.ResetMihomoAPI()
 				reloadSubs()
 				refreshCards()
@@ -195,7 +195,7 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 			app.QueueUpdateDraw(func() {
 				if cfg2 != nil {
 					cfg = cfg2
-					mihomotui.SetGlobalConfig(*cfg2)
+					mihomotui.SyncConfigFromServer(cfg2)
 					mihomotui.ResetMihomoAPI()
 				}
 				reloadSubs()
@@ -276,7 +276,7 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 					// 同步最新配置并重置 API 客户端（secret 可能已变更）
 					cfg2, _ := client.IPCGetConfig()
 					if cfg2 != nil {
-						mihomotui.SetGlobalConfig(*cfg2)
+						mihomotui.SyncConfigFromServer(cfg2)
 						mihomotui.ResetMihomoAPI()
 					}
 					app.QueueUpdateDraw(func() {
@@ -379,7 +379,7 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 			app.QueueUpdateDraw(func() {
 				if cfg2 != nil {
 					cfg = cfg2
-					mihomotui.SetGlobalConfig(*cfg2)
+					mihomotui.SyncConfigFromServer(cfg2)
 					mihomotui.ResetMihomoAPI()
 				}
 				reloadSubs()
@@ -409,7 +409,7 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 			app.QueueUpdateDraw(func() {
 				if cfg2 != nil {
 					cfg = cfg2
-					mihomotui.SetGlobalConfig(*cfg2)
+					mihomotui.SyncConfigFromServer(cfg2)
 					mihomotui.ResetMihomoAPI()
 				}
 				reloadSubs()

@@ -271,13 +271,11 @@ var builtInRulesProviders = map[string]ruleProviderYAML{
 	},
 }
 
-// ensureSecret 确保 API Secret 已设置（如为空则生成并持久化）
+// ensureSecret 确保 API Secret 已设置（如为空则生成）。
+// 仅修改内存；持久化由配置提交层（UpdateGlobalConfig / ReplaceGlobalConfig）负责。
 func (c *Config) ensureSecret() error {
 	if c.Mihomo.Secret == "" {
 		c.Mihomo.Secret = generateRandomSecret()
-		if err := c.Flush(); err != nil {
-			return fmt.Errorf("保存 secret 失败: %w", err)
-		}
 	}
 	return nil
 }
@@ -596,11 +594,8 @@ func (c *Config) GenerateMihomoConfig() error {
 		return fmt.Errorf("收紧 mihomo 配置文件权限失败: %w", err)
 	}
 
-	// 同步更新配置中的 MihomoConfigPath
+	// 同步内存中的 MihomoConfigPath（持久化由配置提交层负责）
 	c.MihomoConfigPath = configPath
-	if err := c.Flush(); err != nil {
-		return fmt.Errorf("保存配置路径更新失败: %w", err)
-	}
 
 	return nil
 }

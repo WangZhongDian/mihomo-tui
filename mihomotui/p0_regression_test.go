@@ -89,7 +89,12 @@ func TestImportAndRefreshSubscriptionRecordsMetadataAndError(t *testing.T) {
 		t.Fatalf("unexpected imported subscription metadata: %+v", sub)
 	}
 	// 路由支持稳定 ID，显示名称仍保留兼容性；重命名后刷新不应依赖旧名称。
-	GlobalConfig().Subscriptions[0].Name = "renamed-sub"
+	if _, err := UpdateGlobalConfig(func(c *Config) error {
+		c.Subscriptions[0].Name = "renamed-sub"
+		return nil
+	}); err != nil {
+		t.Fatalf("rename subscription error = %v", err)
+	}
 	if err := d.refreshSubscription(sub.ID); err != nil {
 		t.Fatalf("refreshSubscription(by ID) error = %v", err)
 	}

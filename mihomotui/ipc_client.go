@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"reflect"
 	"sync"
 	"time"
 )
@@ -80,13 +82,19 @@ func (c *IPCClient) request(method, path string, body []byte, query map[string]s
 		// 尝试解析服务端返回的 JSON 错误信息
 		var apiErr APIResponse
 		if err := json.Unmarshal(data, &apiErr); err == nil && apiErr.Error != "" {
-			if resp.StatusCode == http.StatusForbidden {
+			switch resp.StatusCode {
+			case http.StatusForbidden:
 				return nil, fmt.Errorf("%w：%s", ErrIPCPermissionDenied, apiErr.Error)
+			case http.StatusConflict:
+				return nil, fmt.Errorf("%w：%s", ErrConfigConflict, apiErr.Error)
 			}
 			return nil, fmt.Errorf("%s", apiErr.Error)
 		}
 		if resp.StatusCode == http.StatusForbidden {
 			return nil, fmt.Errorf("%w: HTTP %d: %s", ErrIPCPermissionDenied, resp.StatusCode, string(data))
+		}
+		if resp.StatusCode == http.StatusConflict {
+			return nil, fmt.Errorf("%w: HTTP %d: %s", ErrConfigConflict, resp.StatusCode, string(data))
 		}
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(data))
 	}
@@ -210,14 +218,88 @@ func (c *IPCClient) IPCGetMihomoAPICredentials() (map[string]string, error) {
 	return unmarshalData[map[string]string](resp)
 }
 
-// IPCUpdateConfig 更新服务端配置
-func (c *IPCClient) IPCUpdateConfig(cfg *Config) error {
+// IPCUpdateConfig 更新服务端配置。
+// 返回服务端提交后的配置快照与运行时应用结果；
+// 版本冲突时返回以 ErrConfigConflict 包装的错误。
+func (c *IPCClient) IPCUpdateConfig(cfg *Config) (*ConfigUpdateResponse, error) {
 	body, err := json.Marshal(cfg)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	_, err = c.requestJSON(http.MethodPost, "/api/v1/config", body, nil)
-	return err
+	resp, err := c.requestJSON(http.MethodPost, "/api/v1/config", body, nil)
+	if err != nil {
+		return nil, err
+	}
+	result, err := unmarshalData[ConfigUpdateResponse](resp)
+	if err != nil {
+		return nil, fmt.Errorf("解析配置提交响应失败: %w", err)
+	}
+	return &result, nil
+}
+
+// SyncConfigFromServer 将服务端配置合并进本地缓存：
+// 服务端是配置权威来源，但本地路径字段（mihomo 配置/二进制路径、日志目录）
+// 属于各用户私有偏好，不随服务端覆盖；secret 为空（掩码响应）时保留本地值。
+func SyncConfigFromServer(serverCfg *Config) {
+	if serverCfg == nil {
+		return
+	}
+	local := GlobalConfig()
+	merged := serverCfg.Clone()
+	merged.MihomoConfigPath = local.MihomoConfigPath
+	merged.MihomoBinaryPath = local.MihomoBinaryPath
+	merged.LogDir = local.LogDir
+	if merged.Mihomo.Secret == "" {
+		merged.Mihomo.Secret = local.Mihomo.Secret
+	}
+	SetGlobalConfig(merged)
+}
+
+// MutateServerConfig 以"读取最新 → 修改 → 提交"的方式更新服务端配置：
+// 先从 daemon 获取最新配置（含当前版本号），应用 mutate 后提交；
+// 若提交时版本冲突（配置已被其他会话修改），自动重新获取并重试一次。
+// 成功后同步本地配置缓存（保留本地路径字段与 secret）。
+// 返回服务端的提交响应（含运行时应用结果）。
+func MutateServerConfig(mutate func(*Config)) (*ConfigUpdateResponse, error) {
+	if mutate == nil {
+		return nil, fmt.Errorf("配置修改函数不能为空")
+	}
+	client, err := GetIPCClient()
+	if err != nil {
+		return nil, err
+	}
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		cfg, err := client.IPCGetConfig()
+		if err != nil {
+			return nil, err
+		}
+		before := cfg.Clone()
+		mutate(cfg)
+		// 两侧均取 Clone 再比较：Clone 会把空切片归一化为 nil，
+		// 避免 JSON 反序列化产生的空非 nil 切片造成误判。
+		if after := cfg.Clone(); reflect.DeepEqual(before, after) {
+			// 修改未产生实际变化：跳过提交，避免无意义的版本递增、
+			// 运行时应用与并发冲突（例如页面构建期控件回调触发的重复保存，
+			// 或输入框失焦时值未改变的保存）。
+			masked := *cfg
+			masked.Mihomo.Secret = ""
+			SyncConfigFromServer(&masked)
+			Debugf("配置无实际变化，跳过提交")
+			return &ConfigUpdateResponse{Config: masked, Applied: true}, nil
+		}
+		resp, err := client.IPCUpdateConfig(cfg)
+		if err == nil {
+			SyncConfigFromServer(&resp.Config)
+			return resp, nil
+		}
+		if !errors.Is(err, ErrConfigConflict) {
+			return nil, err
+		}
+		lastErr = err
+		Infof("配置提交版本冲突，重新获取最新配置后重试（第 %d 次）", attempt+1)
+	}
+	return nil, lastErr
 }
 
 // ========== 订阅 ==========

@@ -12,6 +12,17 @@ type ConfigResponse struct {
 	Config Config `json:"config"`
 }
 
+// ConfigUpdateResponse 配置提交响应。
+// 配置本身持久化成功即返回成功；Applied/ApplyStage/ApplyError 描述提交后的
+// 运行时应用结果（生成 mihomo 配置、热重载/重启、TUN 同步），
+// 使调用方能区分"保存失败"与"保存成功但应用失败"。
+type ConfigUpdateResponse struct {
+	Config     Config `json:"config"`                // 已提交的配置快照（Secret 已掩码）
+	Applied    bool   `json:"applied"`               // 运行时应用是否成功
+	ApplyStage string `json:"apply_stage,omitempty"` // 失败阶段
+	ApplyError string `json:"apply_error,omitempty"` // 失败原因
+}
+
 // SubscriptionImportRequest 导入订阅请求
 type SubscriptionImportRequest struct {
 	Name   string `json:"name,omitempty"`

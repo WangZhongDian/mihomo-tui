@@ -58,17 +58,30 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 
 	cfg := mihomotui.GlobalConfig()
 
-	// 统一保存函数：异步 IPC 同步到服务端
-	doSave := func(fieldName string) {
+	// tview 的 AddDropDown 在设置初始选项时会同步触发一次 selected 回调
+	// （SetCurrentOption 的既有行为），页面构建期间会产生并非用户操作的
+	// 伪修改；构建完成前的保存请求一律忽略，全部表单构建结束后置为 true。
+	pageReady := false
+
+	// 统一保存函数：异步 IPC 同步到服务端。
+	// 以"读取最新 → 应用单字段变更 → 提交"的方式保存，
+	// 避免陈旧页面快照整份覆盖服务端的并发修改；
+	// 服务端校验/冲突失败时弹窗提示，保存成功但运行时应用失败时记录警告。
+	doSave := func(fieldName string, mutate func(fresh *mihomotui.Config)) {
+		if !pageReady {
+			return
+		}
 		go func() {
-			client, err := mihomotui.GetIPCClient()
+			resp, err := mihomotui.MutateServerConfig(mutate)
 			if err != nil {
 				mihomotui.Warnf("保存 %s 失败: %v", fieldName, err)
+				app.QueueUpdateDraw(func() {
+					showModal("保存失败", fmt.Sprintf("%s: %v", fieldName, err))
+				})
 				return
 			}
-			if err := client.IPCUpdateConfig(cfg); err != nil {
-				mihomotui.Warnf("保存 %s 失败: %v", fieldName, err)
-				return
+			if !resp.Applied {
+				mihomotui.Warnf("设置 %s 已保存，但应用失败（%s）: %s", fieldName, resp.ApplyStage, resp.ApplyError)
 			}
 			_ = mihomotui.InitLogger(cfg.LogDir, cfg.LogLevel)
 			mihomotui.Infof("设置 %s 已保存", fieldName)
@@ -121,18 +134,21 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 	systemForm := tview.NewForm()
 	systemForm.AddCheckbox("开机启动", cfg.System.AutoStart, func(checked bool) {
 		cfg.System.AutoStart = checked
-		doSave("开机启动")
+		doSave("开机启动", func(fresh *mihomotui.Config) { fresh.System.AutoStart = checked })
 	}).
-		AddCheckbox("系统代理", cfg.System.SystemProxy, func(checked bool) {
-			cfg.System.SystemProxy = checked
+		AddCheckbox("系统代理", mihomotui.GetSystemProxyPreference(), func(checked bool) {
+			// 系统代理是当前 TUI 用户的本地偏好：写本用户环境变量 + 本地偏好文件，
+			// 不写入 daemon 全局配置。
 			if err := cfg.SetSystemProxyEnv(checked); err != nil {
 				mihomotui.Warnf("系统代理环境变量设置失败: %v", err)
 			}
-			doSave("系统代理")
+			if err := mihomotui.SetSystemProxyPreference(checked); err != nil {
+				mihomotui.Warnf("系统代理偏好保存失败: %v", err)
+			}
 		}).
 		AddCheckbox("虚拟网卡模式", cfg.System.TUN, func(checked bool) {
 			cfg.System.TUN = checked
-			doSave("虚拟网卡模式")
+			doSave("虚拟网卡模式", func(fresh *mihomotui.Config) { fresh.System.TUN = checked })
 		}).
 		AddDropDown("语言", []string{"简体中文", "English"}, langIdx, func(option string, optionIndex int) {
 			if optionIndex == 1 {
@@ -140,16 +156,23 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 			} else {
 				cfg.System.Language = "zh-CN"
 			}
-			doSave("语言")
+			language := cfg.System.Language
+			doSave("语言", func(fresh *mihomotui.Config) { fresh.System.Language = language })
 		}).
 		AddDropDown("应用日志级别", []string{"DEBUG", "INFO", "WARN", "ERROR"}, appLogIdx, func(option string, optionIndex int) {
 			cfg.LogLevel = appLogLevels[optionIndex]
-			doSave("应用日志级别")
+			level := cfg.LogLevel
+			doSave("应用日志级别", func(fresh *mihomotui.Config) { fresh.LogLevel = level })
 		}).
 		AddInputField("日志目录", cfg.LogDir, 50, nil, func(text string) {
 			cfg.LogDir = text
 		}).
 		AddInputField("工作目录", workDir, 50, func(text string, ch rune) bool { return false }, nil)
+
+	// systemForm 输入框标签 → 单字段提交函数（blur 保存时仅提交对应字段）
+	systemInputMutations := map[string]func(fresh, page *mihomotui.Config){
+		"日志目录": func(fresh, page *mihomotui.Config) { fresh.LogDir = page.LogDir },
+	}
 
 	// 为 systemForm 的每个 InputField 设置 blur 保存
 	for i := 0; i < systemForm.GetFormItemCount(); i++ {
@@ -161,7 +184,12 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 			}
 			fieldLabel := label
 			inputField.SetFinishedFunc(func(key tcell.Key) {
-				doSave(fieldLabel)
+				mutate, ok := systemInputMutations[fieldLabel]
+				if !ok {
+					return
+				}
+				page := cfg
+				doSave(fieldLabel, func(fresh *mihomotui.Config) { mutate(fresh, page) })
 			})
 		}
 	}
@@ -196,31 +224,42 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 		}).
 		AddCheckbox("允许局域网", cfg.Mihomo.AllowLan, func(checked bool) {
 			cfg.Mihomo.AllowLan = checked
-			doSave("允许局域网")
+			doSave("允许局域网", func(fresh *mihomotui.Config) { fresh.Mihomo.AllowLan = checked })
 		}).
 		AddCheckbox("IPv6", cfg.Mihomo.IPv6, func(checked bool) {
 			cfg.Mihomo.IPv6 = checked
-			doSave("IPv6")
+			doSave("IPv6", func(fresh *mihomotui.Config) { fresh.Mihomo.IPv6 = checked })
 		}).
 		AddCheckbox("统一延迟", cfg.Mihomo.UnifiedDelay, func(checked bool) {
 			cfg.Mihomo.UnifiedDelay = checked
-			doSave("统一延迟")
+			doSave("统一延迟", func(fresh *mihomotui.Config) { fresh.Mihomo.UnifiedDelay = checked })
 		}).
 		AddCheckbox("自动透明代理", cfg.Mihomo.AutoRedirect, func(checked bool) {
 			cfg.Mihomo.AutoRedirect = checked
-			doSave("自动透明代理")
+			doSave("自动透明代理", func(fresh *mihomotui.Config) { fresh.Mihomo.AutoRedirect = checked })
 		}).
 		AddDropDown("日志级别", []string{"DEBUG", "INFO", "WARNING", "ERROR", "SILENT"}, logIdx, func(option string, optionIndex int) {
 			cfg.Mihomo.LogLevel = logLevels[optionIndex]
-			doSave("日志级别")
+			level := cfg.Mihomo.LogLevel
+			doSave("日志级别", func(fresh *mihomotui.Config) { fresh.Mihomo.LogLevel = level })
 		}).
 		AddDropDown("代理默认策略", mihomotui.PolicyList, policyIdx, func(option string, optionIndex int) {
 			cfg.DefaultProxyGroup = option
-			doSave("代理默认策略")
+			doSave("代理默认策略", func(fresh *mihomotui.Config) { fresh.DefaultProxyGroup = option })
 		}).
 		AddInputField("延迟测试链接", cfg.Mihomo.TestURL, 50, nil, func(text string) {
 			cfg.Mihomo.TestURL = text
 		})
+
+	// mihomoForm 输入框标签 → 单字段提交函数（blur 保存时仅提交对应字段）
+	mihomoInputMutations := map[string]func(fresh, page *mihomotui.Config){
+		"HTTP 端口":   func(fresh, page *mihomotui.Config) { fresh.Mihomo.HTTPPort = page.Mihomo.HTTPPort },
+		"SOCKS5 端口": func(fresh, page *mihomotui.Config) { fresh.Mihomo.SOCKS5Port = page.Mihomo.SOCKS5Port },
+		"混合端口":      func(fresh, page *mihomotui.Config) { fresh.Mihomo.MixedPort = page.Mihomo.MixedPort },
+		"Redir 端口":  func(fresh, page *mihomotui.Config) { fresh.Mihomo.RedirPort = page.Mihomo.RedirPort },
+		"TProxy 端口": func(fresh, page *mihomotui.Config) { fresh.Mihomo.TProxyPort = page.Mihomo.TProxyPort },
+		"延迟测试链接":    func(fresh, page *mihomotui.Config) { fresh.Mihomo.TestURL = page.Mihomo.TestURL },
+	}
 
 	// 为 mihomoForm 的每个 InputField 设置 blur 保存
 	for i := 0; i < mihomoForm.GetFormItemCount(); i++ {
@@ -228,7 +267,12 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 		if inputField, ok := item.(*tview.InputField); ok {
 			fieldLabel := inputField.GetLabel()
 			inputField.SetFinishedFunc(func(key tcell.Key) {
-				doSave(fieldLabel)
+				mutate, ok := mihomoInputMutations[fieldLabel]
+				if !ok {
+					return
+				}
+				page := cfg
+				doSave(fieldLabel, func(fresh *mihomotui.Config) { mutate(fresh, page) })
 			})
 		}
 	}
@@ -476,13 +520,13 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 		SetDynamicColors(true).
 		SetTextAlign(tview.AlignCenter).
 		SetText(fmt.Sprintf(
-			"\n\n" +
-				"[::b]mihomo-tui[-:-:-]\n\n" +
-				"版本: %s\n" +
-				"Go 版本: %s\n\n" +
-				"为 [" + mihomotui.ColorInfo + "]mihomo[-] 内核开发的终端 UI 配置工具\n\n" +
-				"仓库: https://github.com/WangZhongDian/mihomo-tui\n\n" +
-				"[" + mihomotui.ColorMuted + "]© 2025 youmetme[-]",
+			"\n\n"+
+				"[::b]mihomo-tui[-:-:-]\n\n"+
+				"版本: %s\n"+
+				"Go 版本: %s\n\n"+
+				"为 ["+mihomotui.ColorInfo+"]mihomo[-] 内核开发的终端 UI 配置工具\n\n"+
+				"仓库: https://github.com/WangZhongDian/mihomo-tui\n\n"+
+				"["+mihomotui.ColorMuted+"]© 2025 youmetme[-]",
 			mihomotui.Version,
 			runtime.Version(),
 		))
@@ -553,6 +597,9 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 		AddItem(content, 0, 1, false)
 
 	settingsPages.AddPage("main", page, true, true)
+
+	// 页面构建完成，此后的控件回调均为真实用户操作，允许保存。
+	pageReady = true
 
 	return settingsPages
 }

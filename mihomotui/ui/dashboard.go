@@ -525,7 +525,8 @@ func newNetSettingsCard(app *tview.Application) (tview.Primitive, func()) {
 
 	update := func() {
 		cfg := mihomotui.GlobalConfig()
-		proxyEnabled := cfg.System.SystemProxy
+		// 系统代理开关是本用户偏好，读取本地客户端偏好而非 daemon 配置
+		proxyEnabled := mihomotui.GetSystemProxyPreference()
 		tunEnabled := cfg.System.TUN
 		if activeTab == 0 {
 			tabProxy.SetLabel(" ■ 系统代理 ")
@@ -587,25 +588,32 @@ func newNetSettingsCard(app *tview.Application) (tview.Primitive, func()) {
 	})
 
 	toggleBtn.SetSelectedFunc(func() {
-		cfg := mihomotui.GlobalConfig()
-		if activeTab == 0 {
-			cfg.System.SystemProxy = !cfg.System.SystemProxy
-			if err := cfg.SetSystemProxyEnv(cfg.System.SystemProxy); err != nil {
+		systemProxyTab := activeTab == 0
+		if systemProxyTab {
+			// 系统代理是当前 TUI 用户的本地偏好：写本用户环境变量 + 本地偏好文件，
+			// 不写入 daemon 全局配置，避免多用户共享 daemon 时互相覆盖。
+			enable := !mihomotui.GetSystemProxyPreference()
+			cfg := mihomotui.GlobalConfig()
+			if err := cfg.SetSystemProxyEnv(enable); err != nil {
 				mihomotui.Warnf("系统代理环境变量设置失败: %v", err)
 			}
-		} else {
-			cfg.System.TUN = !cfg.System.TUN
-		}
-		mihomotui.SetGlobalConfig(*cfg)
-		update()
-		go func() {
-			client, err := mihomotui.GetIPCClient()
-			if err != nil {
-				mihomotui.Warnf("网络设置同步失败: %v", err)
-				return
+			if err := mihomotui.SetSystemProxyPreference(enable); err != nil {
+				mihomotui.Warnf("系统代理偏好保存失败: %v", err)
 			}
-			if err := client.IPCUpdateConfig(cfg); err != nil {
+			update()
+			return
+		}
+		current := mihomotui.GlobalConfig()
+		enable := !current.System.TUN
+		go func() {
+			// 基于服务端最新配置提交单字段变更，避免整份覆盖并发修改
+			if _, err := mihomotui.MutateServerConfig(func(cfg *mihomotui.Config) {
+				cfg.System.TUN = enable
+			}); err != nil {
 				mihomotui.Warnf("网络设置同步失败: %v", err)
+			}
+			if app != nil {
+				app.QueueUpdateDraw(update)
 			}
 		}()
 	})
@@ -675,19 +683,14 @@ func newProxyModeCard() (tview.Primitive, func()) {
 			if action == tview.MouseLeftClick {
 				activeMode = idx
 				update()
-				go func(mode string) {
-					cfg := mihomotui.GlobalConfig()
-					cfg.ProxyMode = mode
-					mihomotui.SetGlobalConfig(*cfg)
-					client, err := mihomotui.GetIPCClient()
-					if err != nil {
-						mihomotui.Warnf("切换代理模式失败: 无法获取 IPC 客户端: %v", err)
-						return
-					}
-					if err := client.IPCUpdateConfig(cfg); err != nil {
-						mihomotui.Warnf("切换代理模式失败: %v", err)
-					}
-				}(modeValues[idx])
+					go func(mode string) {
+						// 基于服务端最新配置提交单字段变更，避免整份覆盖并发修改
+						if _, err := mihomotui.MutateServerConfig(func(cfg *mihomotui.Config) {
+							cfg.ProxyMode = mode
+						}); err != nil {
+							mihomotui.Warnf("切换代理模式失败: %v", err)
+						}
+					}(modeValues[idx])
 			}
 			return action, event
 		})

@@ -369,7 +369,7 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 					return
 				}
 				cfg = cfg2
-				mihomotui.SetGlobalConfig(*cfg2)
+				mihomotui.SyncConfigFromServer(cfg2)
 				mihomotui.ResetMihomoAPI()
 				reloadRps()
 				refreshCards()
@@ -401,7 +401,7 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 			app.QueueUpdateDraw(func() {
 				if cfg2 != nil {
 					cfg = cfg2
-					mihomotui.SetGlobalConfig(*cfg2)
+					mihomotui.SyncConfigFromServer(cfg2)
 					mihomotui.ResetMihomoAPI()
 				}
 				reloadRps()
@@ -473,31 +473,19 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 							return
 						}
 						go func() {
-							client, err := mihomotui.GetIPCClient()
+							// 基于服务端最新配置按名称定位规则订阅后提交单字段变更
+							_, err := mihomotui.MutateServerConfig(func(fresh *mihomotui.Config) {
+								if ri := fresh.FindRuleProviderByName(rp.Name); ri >= 0 {
+									fresh.RuleProviderSubscriptions[ri].ProxyGroup = buttonLabel
+								}
+							})
 							if err != nil {
-								app.QueueUpdateDraw(func() {
-									showModal("修改失败", err.Error())
-								})
-								return
-							}
-							cfg.RuleProviderSubscriptions[si].ProxyGroup = buttonLabel
-							if err := cfg.Flush(); err != nil {
 								app.QueueUpdateDraw(func() {
 									showModal("保存失败", err.Error())
 								})
 								return
 							}
-							if err := client.IPCUpdateConfig(cfg); err != nil {
-								app.QueueUpdateDraw(func() {
-									showModal("同步失败", err.Error())
-								})
-								return
-							}
-							cfg2, _ := client.IPCGetConfig()
 							app.QueueUpdateDraw(func() {
-								if cfg2 != nil {
-									mihomotui.SetGlobalConfig(*cfg2)
-								}
 								reloadRps()
 								refreshCards()
 								showModal("修改成功", fmt.Sprintf("策略组已设置为: %s", buttonLabel))
@@ -584,7 +572,7 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 			app.QueueUpdateDraw(func() {
 				if cfg2 != nil {
 					cfg = cfg2
-					mihomotui.SetGlobalConfig(*cfg2)
+					mihomotui.SyncConfigFromServer(cfg2)
 					mihomotui.ResetMihomoAPI()
 				}
 				reloadRps()
@@ -697,33 +685,25 @@ func newCustomRulesPage(app *tview.Application, pages *tview.Pages) tview.Primit
 		if idx < 0 || idx >= len(cfg.CustomRules) {
 			return
 		}
+		// 按规则内容删除，避免提交期间索引因并发修改而漂移
+		ruleText := cfg.CustomRules[idx]
 		go func() {
-			client, err := mihomotui.GetIPCClient()
+			_, err := mihomotui.MutateServerConfig(func(fresh *mihomotui.Config) {
+				for i, r := range fresh.CustomRules {
+					if r == ruleText {
+						fresh.CustomRules = append(fresh.CustomRules[:i], fresh.CustomRules[i+1:]...)
+						return
+					}
+				}
+			})
 			if err != nil {
 				app.QueueUpdateDraw(func() {
 					ShowAlertModal(app, pages, "删除失败", err.Error())
 				})
 				return
 			}
-			cfg.CustomRules = append(cfg.CustomRules[:idx], cfg.CustomRules[idx+1:]...)
-			if err := cfg.Flush(); err != nil {
-				app.QueueUpdateDraw(func() {
-					ShowAlertModal(app, pages, "保存失败", err.Error())
-				})
-				return
-			}
-			if err := client.IPCUpdateConfig(cfg); err != nil {
-				app.QueueUpdateDraw(func() {
-					ShowAlertModal(app, pages, "同步失败", err.Error())
-				})
-				return
-			}
-			cfg2, _ := client.IPCGetConfig()
+			cfg = mihomotui.GlobalConfig()
 			app.QueueUpdateDraw(func() {
-				if cfg2 != nil {
-					cfg = cfg2
-					mihomotui.SetGlobalConfig(*cfg2)
-				}
 				refreshList()
 			})
 		}()
@@ -778,32 +758,19 @@ func newCustomRulesPage(app *tview.Application, pages *tview.Pages) tview.Primit
 			return
 		}
 		go func() {
-			client, err := mihomotui.GetIPCClient()
+			_, err := mihomotui.MutateServerConfig(func(fresh *mihomotui.Config) {
+				if !slices.Contains(fresh.CustomRules, rule) {
+					fresh.CustomRules = append(fresh.CustomRules, rule)
+				}
+			})
 			if err != nil {
 				app.QueueUpdateDraw(func() {
 					ShowAlertModal(app, pages, "添加失败", err.Error())
 				})
 				return
 			}
-			cfg.CustomRules = append(cfg.CustomRules, rule)
-			if err := cfg.Flush(); err != nil {
-				app.QueueUpdateDraw(func() {
-					ShowAlertModal(app, pages, "保存失败", err.Error())
-				})
-				return
-			}
-			if err := client.IPCUpdateConfig(cfg); err != nil {
-				app.QueueUpdateDraw(func() {
-					ShowAlertModal(app, pages, "同步失败", err.Error())
-				})
-				return
-			}
-			cfg2, _ := client.IPCGetConfig()
+			cfg = mihomotui.GlobalConfig()
 			app.QueueUpdateDraw(func() {
-				if cfg2 != nil {
-					cfg = cfg2
-					mihomotui.SetGlobalConfig(*cfg2)
-				}
 				ruleInput.SetText("")
 				refreshList()
 				ShowAlertModal(app, pages, "添加成功", fmt.Sprintf("规则: %s", rule))
