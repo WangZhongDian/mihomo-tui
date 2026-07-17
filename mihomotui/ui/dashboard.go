@@ -190,7 +190,7 @@ func NewDashboard(app *tview.Application) (Page, func()) {
 	netCard, refreshNetCard := newNetSettingsCard(app)
 
 	// 代理模式卡片（可交互）
-	modeCard, refreshModeCard := newProxyModeCard()
+	modeCard, refreshModeCard := newProxyModeCard(app)
 
 	// 流量统计卡片
 	statsCard := tview.NewTextView().
@@ -596,6 +596,9 @@ func newNetSettingsCard(app *tview.Application) (tview.Primitive, func()) {
 			cfg := mihomotui.GlobalConfig()
 			if err := cfg.SetSystemProxyEnv(enable); err != nil {
 				mihomotui.Warnf("系统代理环境变量设置失败: %v", err)
+				// 注入失败：不更新偏好，显示保持原状态，避免与实际不符
+				update()
+				return
 			}
 			if err := mihomotui.SetSystemProxyPreference(enable); err != nil {
 				mihomotui.Warnf("系统代理偏好保存失败: %v", err)
@@ -640,7 +643,7 @@ func newNetSettingsCard(app *tview.Application) (tview.Primitive, func()) {
 }
 
 // newProxyModeCard 创建可交互的代理模式卡片
-func newProxyModeCard() (tview.Primitive, func()) {
+func newProxyModeCard(app *tview.Application) (tview.Primitive, func()) {
 	modes := []string{"规则", "全局", "直连"}
 	modeValues := []string{"rule", "global", "direct"}
 	descriptions := []string{
@@ -663,6 +666,9 @@ func newProxyModeCard() (tview.Primitive, func()) {
 	tabViews := make([]*tview.TextView, len(modes))
 	tabs := tview.NewFlex()
 
+	// refresh 在下方定义（从本地缓存恢复显示），点击回调失败时用于回滚显示
+	var refresh func()
+
 	update := func() {
 		for i, tv := range tabViews {
 			if i == activeMode {
@@ -681,16 +687,24 @@ func newProxyModeCard() (tview.Primitive, func()) {
 			SetTextAlign(tview.AlignCenter)
 		tv.SetMouseCapture(func(action tview.MouseAction, event *tcell.EventMouse) (tview.MouseAction, *tcell.EventMouse) {
 			if action == tview.MouseLeftClick {
+				mode := modeValues[idx]
+				if mode == mihomotui.GlobalConfig().ProxyMode {
+					return action, event // 模式未变化，不触发保存
+				}
 				activeMode = idx
 				update()
-					go func(mode string) {
-						// 基于服务端最新配置提交单字段变更，避免整份覆盖并发修改
-						if _, err := mihomotui.MutateServerConfig(func(cfg *mihomotui.Config) {
-							cfg.ProxyMode = mode
-						}); err != nil {
-							mihomotui.Warnf("切换代理模式失败: %v", err)
+				go func() {
+					// 基于服务端最新配置提交单字段变更，避免整份覆盖并发修改
+					if _, err := mihomotui.MutateServerConfig(func(cfg *mihomotui.Config) {
+						cfg.ProxyMode = mode
+					}); err != nil {
+						mihomotui.Warnf("切换代理模式失败: %v", err)
+						// 保存失败：从本地缓存恢复显示为当前生效模式
+						if app != nil {
+							app.QueueUpdateDraw(refresh)
 						}
-					}(modeValues[idx])
+					}
+				}()
 			}
 			return action, event
 		})
@@ -706,7 +720,7 @@ func newProxyModeCard() (tview.Primitive, func()) {
 	card.SetBorder(true).SetTitle(" 代理模式 ")
 	card.SetBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
 
-	refresh := func() {
+	refresh = func() {
 		cfg := mihomotui.GlobalConfig()
 		for i, v := range modeValues {
 			if cfg.ProxyMode == v {

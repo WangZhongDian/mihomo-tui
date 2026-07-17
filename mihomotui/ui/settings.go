@@ -19,6 +19,13 @@ func buildProgressBar(percent int) string {
 	return "[" + strings.Repeat("=", filled) + strings.Repeat(" ", width-filled) + "]"
 }
 
+// inputBinding 设置页输入框绑定：apply 解析并应用输入到配置（返回错误表示输入无效），
+// current 读取当前生效值的显示形式（用于内容比对与失败后恢复显示）。
+type inputBinding struct {
+	apply   func(fresh *mihomotui.Config, text string) error
+	current func(c *mihomotui.Config) string
+}
+
 // NewSettingsPage 创建设置页面
 func NewSettingsPage(app *tview.Application) tview.Primitive {
 	activeTab := 0 // 0=系统设置, 1=mihomo设置, 2=关于
@@ -63,12 +70,24 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 	// 伪修改；构建完成前的保存请求一律忽略，全部表单构建结束后置为 true。
 	pageReady := false
 
+	// reverting 为 true 表示正在以编程方式恢复控件显示（保存失败回滚）；
+	// 此期间控件的 changed/selected 回调不再触发保存，防止回滚递归。
+	// tview 的 SetChecked/SetCurrentOption 在值变化时会同步触发回调，
+	// 因此回滚必须通过 silentSet 进行（仅在 UI 线程使用）。
+	reverting := false
+	silentSet := func(fn func()) {
+		reverting = true
+		defer func() { reverting = false }()
+		fn()
+	}
+
 	// 统一保存函数：异步 IPC 同步到服务端。
 	// 以"读取最新 → 应用单字段变更 → 提交"的方式保存，
 	// 避免陈旧页面快照整份覆盖服务端的并发修改；
-	// 服务端校验/冲突失败时弹窗提示，保存成功但运行时应用失败时记录警告。
-	doSave := func(fieldName string, mutate func(fresh *mihomotui.Config)) {
-		if !pageReady {
+	// 服务端校验/冲突失败时先执行 revert 恢复控件显示（保持界面与
+	// 实际生效配置一致），再弹窗提示；保存成功但运行时应用失败时记录警告。
+	doSave := func(fieldName string, mutate func(fresh *mihomotui.Config), revert func()) {
+		if !pageReady || reverting {
 			return
 		}
 		go func() {
@@ -76,6 +95,9 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 			if err != nil {
 				mihomotui.Warnf("保存 %s 失败: %v", fieldName, err)
 				app.QueueUpdateDraw(func() {
+					if revert != nil {
+						revert()
+					}
 					showModal("保存失败", fmt.Sprintf("%s: %v", fieldName, err))
 				})
 				return
@@ -83,9 +105,76 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 			if !resp.Applied {
 				mihomotui.Warnf("设置 %s 已保存，但应用失败（%s）: %s", fieldName, resp.ApplyStage, resp.ApplyError)
 			}
-			_ = mihomotui.InitLogger(cfg.LogDir, cfg.LogLevel)
+			// 本地缓存已在提交成功后同步，以其为准刷新日志配置
+			g := mihomotui.GlobalConfig()
+			_ = mihomotui.InitLogger(g.LogDir, g.LogLevel)
 			mihomotui.Infof("设置 %s 已保存", fieldName)
 		}()
+	}
+
+	// 按标签查找表单控件，用于保存失败后的显示回滚（查找发生在 UI 线程）。
+	findCheckbox := func(form *tview.Form, label string) *tview.Checkbox {
+		for i := 0; i < form.GetFormItemCount(); i++ {
+			if cb, ok := form.GetFormItem(i).(*tview.Checkbox); ok && cb.GetLabel() == label {
+				return cb
+			}
+		}
+		return nil
+	}
+	findDropDown := func(form *tview.Form, label string) *tview.DropDown {
+		for i := 0; i < form.GetFormItemCount(); i++ {
+			if dd, ok := form.GetFormItem(i).(*tview.DropDown); ok && dd.GetLabel() == label {
+				return dd
+			}
+		}
+		return nil
+	}
+
+	// bindInputSave 为表单输入框设置失焦保存：仅在内容变化时提交；
+	// 输入无法解析或保存失败时恢复显示为当前生效值，避免界面与实际配置不一致。
+	bindInputSave := func(form *tview.Form, bindings map[string]inputBinding) {
+		for i := 0; i < form.GetFormItemCount(); i++ {
+			field, ok := form.GetFormItem(i).(*tview.InputField)
+			if !ok {
+				continue
+			}
+			binding, ok := bindings[field.GetLabel()]
+			if !ok {
+				continue
+			}
+			inputField := field
+			fieldBinding := binding
+			inputField.SetFinishedFunc(func(key tcell.Key) {
+				text := inputField.GetText()
+				g := mihomotui.GlobalConfig()
+				if text == fieldBinding.current(g) {
+					return // 内容未变化（含失焦未编辑）
+				}
+				if err := fieldBinding.apply(g, text); err != nil {
+					inputField.SetText(fieldBinding.current(mihomotui.GlobalConfig()))
+					showModal("无效输入", fmt.Sprintf("%s: %v", inputField.GetLabel(), err))
+					return
+				}
+				doSave(inputField.GetLabel(),
+					func(fresh *mihomotui.Config) { _ = fieldBinding.apply(fresh, text) },
+					func() { inputField.SetText(fieldBinding.current(mihomotui.GlobalConfig())) })
+			})
+		}
+	}
+
+	// portBinding 构造端口类输入框绑定：解析整数，失败时给出可读错误。
+	portBinding := func(set func(fresh *mihomotui.Config, v int), get func(c *mihomotui.Config) int) inputBinding {
+		return inputBinding{
+			apply: func(fresh *mihomotui.Config, text string) error {
+				v, err := strconv.Atoi(strings.TrimSpace(text))
+				if err != nil {
+					return fmt.Errorf("请输入有效数字")
+				}
+				set(fresh, v)
+				return nil
+			},
+			current: func(c *mihomotui.Config) string { return strconv.Itoa(get(c)) },
+		}
 	}
 
 	// 语言索引映射
@@ -131,151 +220,222 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 	}
 
 	// ---------- 系统设置 ----------
+	// 注意：控件回调不再预写页面配置快照，"原始值"一律以本地缓存 GlobalConfig()
+	// （每次保存成功后与服务端同步）为准；保存失败时据此恢复控件显示。
 	systemForm := tview.NewForm()
 	systemForm.AddCheckbox("开机启动", cfg.System.AutoStart, func(checked bool) {
-		cfg.System.AutoStart = checked
-		doSave("开机启动", func(fresh *mihomotui.Config) { fresh.System.AutoStart = checked })
+		doSave("开机启动",
+			func(fresh *mihomotui.Config) { fresh.System.AutoStart = checked },
+			func() {
+				if cb := findCheckbox(systemForm, "开机启动"); cb != nil {
+					silentSet(func() { cb.SetChecked(mihomotui.GlobalConfig().System.AutoStart) })
+				}
+			})
 	}).
 		AddCheckbox("系统代理", mihomotui.GetSystemProxyPreference(), func(checked bool) {
+			if reverting {
+				return
+			}
 			// 系统代理是当前 TUI 用户的本地偏好：写本用户环境变量 + 本地偏好文件，
 			// 不写入 daemon 全局配置。
 			if err := cfg.SetSystemProxyEnv(checked); err != nil {
 				mihomotui.Warnf("系统代理环境变量设置失败: %v", err)
+				// 注入失败：回滚偏好与显示，避免显示状态与实际不符
+				if perr := mihomotui.SetSystemProxyPreference(!checked); perr != nil {
+					mihomotui.Warnf("系统代理偏好回滚失败: %v", perr)
+				}
+				if cb := findCheckbox(systemForm, "系统代理"); cb != nil {
+					silentSet(func() { cb.SetChecked(!checked) })
+				}
+				return
 			}
 			if err := mihomotui.SetSystemProxyPreference(checked); err != nil {
 				mihomotui.Warnf("系统代理偏好保存失败: %v", err)
 			}
 		}).
 		AddCheckbox("虚拟网卡模式", cfg.System.TUN, func(checked bool) {
-			cfg.System.TUN = checked
-			doSave("虚拟网卡模式", func(fresh *mihomotui.Config) { fresh.System.TUN = checked })
+			doSave("虚拟网卡模式",
+				func(fresh *mihomotui.Config) { fresh.System.TUN = checked },
+				func() {
+					if cb := findCheckbox(systemForm, "虚拟网卡模式"); cb != nil {
+						silentSet(func() { cb.SetChecked(mihomotui.GlobalConfig().System.TUN) })
+					}
+				})
 		}).
 		AddDropDown("语言", []string{"简体中文", "English"}, langIdx, func(option string, optionIndex int) {
+			language := "zh-CN"
 			if optionIndex == 1 {
-				cfg.System.Language = "en"
-			} else {
-				cfg.System.Language = "zh-CN"
+				language = "en"
 			}
-			language := cfg.System.Language
-			doSave("语言", func(fresh *mihomotui.Config) { fresh.System.Language = language })
+			// 值未变化（初始化/回退/重复选择触发）时不保存
+			if language == mihomotui.GlobalConfig().System.Language {
+				return
+			}
+			doSave("语言",
+				func(fresh *mihomotui.Config) { fresh.System.Language = language },
+				func() {
+					idx := 0
+					if mihomotui.GlobalConfig().System.Language == "en" {
+						idx = 1
+					}
+					if dd := findDropDown(systemForm, "语言"); dd != nil {
+						silentSet(func() { dd.SetCurrentOption(idx) })
+					}
+				})
 		}).
 		AddDropDown("应用日志级别", []string{"DEBUG", "INFO", "WARN", "ERROR"}, appLogIdx, func(option string, optionIndex int) {
-			cfg.LogLevel = appLogLevels[optionIndex]
-			level := cfg.LogLevel
-			doSave("应用日志级别", func(fresh *mihomotui.Config) { fresh.LogLevel = level })
+			level := appLogLevels[optionIndex]
+			if level == mihomotui.GlobalConfig().LogLevel {
+				return
+			}
+			doSave("应用日志级别",
+				func(fresh *mihomotui.Config) { fresh.LogLevel = level },
+				func() {
+					cur := mihomotui.GlobalConfig().LogLevel
+					idx := appLogIdx
+					for i, v := range appLogLevels {
+						if v == cur {
+							idx = i
+							break
+						}
+					}
+					if dd := findDropDown(systemForm, "应用日志级别"); dd != nil {
+						silentSet(func() { dd.SetCurrentOption(idx) })
+					}
+				})
 		}).
-		AddInputField("日志目录", cfg.LogDir, 50, nil, func(text string) {
-			cfg.LogDir = text
-		}).
+		AddInputField("日志目录", cfg.LogDir, 50, nil, nil).
 		AddInputField("工作目录", workDir, 50, func(text string, ch rune) bool { return false }, nil)
 
-	// systemForm 输入框标签 → 单字段提交函数（blur 保存时仅提交对应字段）
-	systemInputMutations := map[string]func(fresh, page *mihomotui.Config){
-		"日志目录": func(fresh, page *mihomotui.Config) { fresh.LogDir = page.LogDir },
-	}
-
-	// 为 systemForm 的每个 InputField 设置 blur 保存
-	for i := 0; i < systemForm.GetFormItemCount(); i++ {
-		item := systemForm.GetFormItem(i)
-		if inputField, ok := item.(*tview.InputField); ok {
-			label := inputField.GetLabel()
-			if label == "工作目录" {
-				continue // 只读字段，跳过
-			}
-			fieldLabel := label
-			inputField.SetFinishedFunc(func(key tcell.Key) {
-				mutate, ok := systemInputMutations[fieldLabel]
-				if !ok {
-					return
+	// 系统设置输入框失焦保存（"工作目录"为只读字段，不在绑定表中）
+	bindInputSave(systemForm, map[string]inputBinding{
+		"日志目录": {
+			apply: func(fresh *mihomotui.Config, text string) error {
+				if strings.TrimSpace(text) == "" {
+					return fmt.Errorf("日志目录不能为空")
 				}
-				page := cfg
-				doSave(fieldLabel, func(fresh *mihomotui.Config) { mutate(fresh, page) })
-			})
-		}
-	}
+				fresh.LogDir = text
+				return nil
+			},
+			current: func(c *mihomotui.Config) string { return c.LogDir },
+		},
+	})
 	systemForm.SetBorder(true).SetTitle(" 系统设置 ")
 
 	// ---------- mihomo 设置 ----------
 	mihomoForm := tview.NewForm()
-	mihomoForm.AddInputField("HTTP 端口", strconv.Itoa(cfg.Mihomo.HTTPPort), 10, nil, func(text string) {
-		if v, err := strconv.Atoi(text); err == nil {
-			cfg.Mihomo.HTTPPort = v
-		}
-	}).
-		AddInputField("SOCKS5 端口", strconv.Itoa(cfg.Mihomo.SOCKS5Port), 10, nil, func(text string) {
-			if v, err := strconv.Atoi(text); err == nil {
-				cfg.Mihomo.SOCKS5Port = v
-			}
-		}).
-		AddInputField("混合端口", strconv.Itoa(cfg.Mihomo.MixedPort), 10, nil, func(text string) {
-			if v, err := strconv.Atoi(text); err == nil {
-				cfg.Mihomo.MixedPort = v
-			}
-		}).
-		AddInputField("Redir 端口", strconv.Itoa(cfg.Mihomo.RedirPort), 10, nil, func(text string) {
-			if v, err := strconv.Atoi(text); err == nil {
-				cfg.Mihomo.RedirPort = v
-			}
-		}).
-		AddInputField("TProxy 端口", strconv.Itoa(cfg.Mihomo.TProxyPort), 10, nil, func(text string) {
-			if v, err := strconv.Atoi(text); err == nil {
-				cfg.Mihomo.TProxyPort = v
-			}
-		}).
+	mihomoForm.AddInputField("HTTP 端口", strconv.Itoa(cfg.Mihomo.HTTPPort), 10, nil, nil).
+		AddInputField("SOCKS5 端口", strconv.Itoa(cfg.Mihomo.SOCKS5Port), 10, nil, nil).
+		AddInputField("混合端口", strconv.Itoa(cfg.Mihomo.MixedPort), 10, nil, nil).
+		AddInputField("Redir 端口", strconv.Itoa(cfg.Mihomo.RedirPort), 10, nil, nil).
+		AddInputField("TProxy 端口", strconv.Itoa(cfg.Mihomo.TProxyPort), 10, nil, nil).
 		AddCheckbox("允许局域网", cfg.Mihomo.AllowLan, func(checked bool) {
-			cfg.Mihomo.AllowLan = checked
-			doSave("允许局域网", func(fresh *mihomotui.Config) { fresh.Mihomo.AllowLan = checked })
+			doSave("允许局域网",
+				func(fresh *mihomotui.Config) { fresh.Mihomo.AllowLan = checked },
+				func() {
+					if cb := findCheckbox(mihomoForm, "允许局域网"); cb != nil {
+						silentSet(func() { cb.SetChecked(mihomotui.GlobalConfig().Mihomo.AllowLan) })
+					}
+				})
 		}).
 		AddCheckbox("IPv6", cfg.Mihomo.IPv6, func(checked bool) {
-			cfg.Mihomo.IPv6 = checked
-			doSave("IPv6", func(fresh *mihomotui.Config) { fresh.Mihomo.IPv6 = checked })
+			doSave("IPv6",
+				func(fresh *mihomotui.Config) { fresh.Mihomo.IPv6 = checked },
+				func() {
+					if cb := findCheckbox(mihomoForm, "IPv6"); cb != nil {
+						silentSet(func() { cb.SetChecked(mihomotui.GlobalConfig().Mihomo.IPv6) })
+					}
+				})
 		}).
 		AddCheckbox("统一延迟", cfg.Mihomo.UnifiedDelay, func(checked bool) {
-			cfg.Mihomo.UnifiedDelay = checked
-			doSave("统一延迟", func(fresh *mihomotui.Config) { fresh.Mihomo.UnifiedDelay = checked })
+			doSave("统一延迟",
+				func(fresh *mihomotui.Config) { fresh.Mihomo.UnifiedDelay = checked },
+				func() {
+					if cb := findCheckbox(mihomoForm, "统一延迟"); cb != nil {
+						silentSet(func() { cb.SetChecked(mihomotui.GlobalConfig().Mihomo.UnifiedDelay) })
+					}
+				})
 		}).
 		AddCheckbox("自动透明代理", cfg.Mihomo.AutoRedirect, func(checked bool) {
-			cfg.Mihomo.AutoRedirect = checked
-			doSave("自动透明代理", func(fresh *mihomotui.Config) { fresh.Mihomo.AutoRedirect = checked })
+			doSave("自动透明代理",
+				func(fresh *mihomotui.Config) { fresh.Mihomo.AutoRedirect = checked },
+				func() {
+					if cb := findCheckbox(mihomoForm, "自动透明代理"); cb != nil {
+						silentSet(func() { cb.SetChecked(mihomotui.GlobalConfig().Mihomo.AutoRedirect) })
+					}
+				})
 		}).
 		AddDropDown("日志级别", []string{"DEBUG", "INFO", "WARNING", "ERROR", "SILENT"}, logIdx, func(option string, optionIndex int) {
-			cfg.Mihomo.LogLevel = logLevels[optionIndex]
-			level := cfg.Mihomo.LogLevel
-			doSave("日志级别", func(fresh *mihomotui.Config) { fresh.Mihomo.LogLevel = level })
+			level := logLevels[optionIndex]
+			if level == mihomotui.GlobalConfig().Mihomo.LogLevel {
+				return
+			}
+			doSave("日志级别",
+				func(fresh *mihomotui.Config) { fresh.Mihomo.LogLevel = level },
+				func() {
+					cur := mihomotui.GlobalConfig().Mihomo.LogLevel
+					idx := logIdx
+					for i, v := range logLevels {
+						if v == cur {
+							idx = i
+							break
+						}
+					}
+					if dd := findDropDown(mihomoForm, "日志级别"); dd != nil {
+						silentSet(func() { dd.SetCurrentOption(idx) })
+					}
+				})
 		}).
 		AddDropDown("代理默认策略", mihomotui.PolicyList, policyIdx, func(option string, optionIndex int) {
-			cfg.DefaultProxyGroup = option
-			doSave("代理默认策略", func(fresh *mihomotui.Config) { fresh.DefaultProxyGroup = option })
+			if option == mihomotui.GlobalConfig().DefaultProxyGroup {
+				return
+			}
+			doSave("代理默认策略",
+				func(fresh *mihomotui.Config) { fresh.DefaultProxyGroup = option },
+				func() {
+					cur := mihomotui.GlobalConfig().DefaultProxyGroup
+					idx := policyIdx
+					for i, v := range mihomotui.PolicyList {
+						if v == cur {
+							idx = i
+							break
+						}
+					}
+					if dd := findDropDown(mihomoForm, "代理默认策略"); dd != nil {
+						silentSet(func() { dd.SetCurrentOption(idx) })
+					}
+				})
 		}).
-		AddInputField("延迟测试链接", cfg.Mihomo.TestURL, 50, nil, func(text string) {
-			cfg.Mihomo.TestURL = text
-		})
+		AddInputField("延迟测试链接", cfg.Mihomo.TestURL, 50, nil, nil)
 
-	// mihomoForm 输入框标签 → 单字段提交函数（blur 保存时仅提交对应字段）
-	mihomoInputMutations := map[string]func(fresh, page *mihomotui.Config){
-		"HTTP 端口":   func(fresh, page *mihomotui.Config) { fresh.Mihomo.HTTPPort = page.Mihomo.HTTPPort },
-		"SOCKS5 端口": func(fresh, page *mihomotui.Config) { fresh.Mihomo.SOCKS5Port = page.Mihomo.SOCKS5Port },
-		"混合端口":      func(fresh, page *mihomotui.Config) { fresh.Mihomo.MixedPort = page.Mihomo.MixedPort },
-		"Redir 端口":  func(fresh, page *mihomotui.Config) { fresh.Mihomo.RedirPort = page.Mihomo.RedirPort },
-		"TProxy 端口": func(fresh, page *mihomotui.Config) { fresh.Mihomo.TProxyPort = page.Mihomo.TProxyPort },
-		"延迟测试链接":    func(fresh, page *mihomotui.Config) { fresh.Mihomo.TestURL = page.Mihomo.TestURL },
-	}
-
-	// 为 mihomoForm 的每个 InputField 设置 blur 保存
-	for i := 0; i < mihomoForm.GetFormItemCount(); i++ {
-		item := mihomoForm.GetFormItem(i)
-		if inputField, ok := item.(*tview.InputField); ok {
-			fieldLabel := inputField.GetLabel()
-			inputField.SetFinishedFunc(func(key tcell.Key) {
-				mutate, ok := mihomoInputMutations[fieldLabel]
-				if !ok {
-					return
+	// mihomo 设置输入框失焦保存
+	bindInputSave(mihomoForm, map[string]inputBinding{
+		"HTTP 端口": portBinding(
+			func(fresh *mihomotui.Config, v int) { fresh.Mihomo.HTTPPort = v },
+			func(c *mihomotui.Config) int { return c.Mihomo.HTTPPort }),
+		"SOCKS5 端口": portBinding(
+			func(fresh *mihomotui.Config, v int) { fresh.Mihomo.SOCKS5Port = v },
+			func(c *mihomotui.Config) int { return c.Mihomo.SOCKS5Port }),
+		"混合端口": portBinding(
+			func(fresh *mihomotui.Config, v int) { fresh.Mihomo.MixedPort = v },
+			func(c *mihomotui.Config) int { return c.Mihomo.MixedPort }),
+		"Redir 端口": portBinding(
+			func(fresh *mihomotui.Config, v int) { fresh.Mihomo.RedirPort = v },
+			func(c *mihomotui.Config) int { return c.Mihomo.RedirPort }),
+		"TProxy 端口": portBinding(
+			func(fresh *mihomotui.Config, v int) { fresh.Mihomo.TProxyPort = v },
+			func(c *mihomotui.Config) int { return c.Mihomo.TProxyPort }),
+		"延迟测试链接": {
+			apply: func(fresh *mihomotui.Config, text string) error {
+				if strings.TrimSpace(text) == "" {
+					return fmt.Errorf("测试链接不能为空")
 				}
-				page := cfg
-				doSave(fieldLabel, func(fresh *mihomotui.Config) { mutate(fresh, page) })
-			})
-		}
-	}
+				fresh.Mihomo.TestURL = text
+				return nil
+			},
+			current: func(c *mihomotui.Config) string { return c.Mihomo.TestURL },
+		},
+	})
 	mihomoForm.SetBorder(true).SetTitle(" mihomo 设置 ")
 
 	// ---------- mihomo 版本卡片 ----------
