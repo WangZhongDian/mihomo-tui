@@ -54,22 +54,29 @@ type ExternalResources struct {
 
 // SubscriptionMeta 订阅元数据
 type SubscriptionMeta struct {
-	Name      string  `yaml:"name"`
-	URL       string  `yaml:"url"`
-	UpdatedAt string  `yaml:"updated_at"`
-	UsedGB    float64 `yaml:"used_gb"`
-	TotalGB   float64 `yaml:"total_gb"`
+	ID            string  `yaml:"id"`
+	Name          string  `yaml:"name"`
+	URL           string  `yaml:"url"`
+	UpdatedAt     string  `yaml:"updated_at"`
+	LastSuccessAt string  `yaml:"last_success_at"`
+	LastFailureAt string  `yaml:"last_failure_at,omitempty"`
+	LastError     string  `yaml:"last_error,omitempty"`
+	UsedGB        float64 `yaml:"used_gb"`
+	TotalGB       float64 `yaml:"total_gb"`
 }
 
 // RuleProviderSubscription 规则订阅元数据
 type RuleProviderSubscription struct {
-	Name       string `yaml:"name"`
-	URL        string `yaml:"url"`
-	Behavior   string `yaml:"behavior"`    // classical / domain / ipcidr
-	Format     string `yaml:"format"`      // yaml / text / mrs，默认 yaml
-	Interval   int    `yaml:"interval"`    // 更新间隔（秒），默认 86400
-	ProxyGroup string `yaml:"proxy_group"` // Auto / DIRECT / REJECT，默认 Auto
-	UpdatedAt  string `yaml:"updated_at"`
+	Name          string `yaml:"name"`
+	URL           string `yaml:"url"`
+	Behavior      string `yaml:"behavior"`    // classical / domain / ipcidr
+	Format        string `yaml:"format"`      // yaml / text / mrs，默认 yaml
+	Interval      int    `yaml:"interval"`    // 更新间隔（秒），默认 86400
+	ProxyGroup    string `yaml:"proxy_group"` // Auto / DIRECT / REJECT，默认 Auto
+	UpdatedAt     string `yaml:"updated_at"`
+	LastSuccessAt string `yaml:"last_success_at"`
+	LastFailureAt string `yaml:"last_failure_at,omitempty"`
+	LastError     string `yaml:"last_error,omitempty"`
 }
 
 // Config 全局配置
@@ -131,9 +138,12 @@ func SetCustomConfigDir(dir string) {
 		absDir = dir
 	}
 	// 先验证目录可访问，成功后再设置 customConfigDir
-	if err := os.MkdirAll(absDir, 0755); err != nil {
+	if err := os.MkdirAll(absDir, 0700); err != nil {
 		Warnf("无法使用配置目录 %s: %v，继续使用当前目录 %s", absDir, err, GetConfigDir())
 		return
+	}
+	if err := os.Chmod(absDir, 0700); err != nil {
+		Warnf("无法收紧配置目录权限 %s: %v", absDir, err)
 	}
 	configMu.Lock()
 	customConfigDir = absDir
@@ -225,8 +235,12 @@ func GetConfigDir() string {
 	}
 
 	dir := filepath.Join(baseDir, CONFIG_DIR_NAME)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		fmt.Fprintf(os.Stderr, "创建配置目录失败: %v\n", err)
+		return ""
+	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		fmt.Fprintf(os.Stderr, "设置配置目录权限失败: %v\n", err)
 		return ""
 	}
 	return dir
@@ -235,8 +249,12 @@ func GetConfigDir() string {
 // GetSubscriptionsDir 返回订阅节点文件存储目录
 func GetSubscriptionsDir() string {
 	dir := filepath.Join(GetConfigDir(), SUBSCRIPTIONS_DIR)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		fmt.Fprintf(os.Stderr, "创建订阅目录失败: %v\n", err)
+		return ""
+	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		fmt.Fprintf(os.Stderr, "设置订阅目录权限失败: %v\n", err)
 		return ""
 	}
 	return dir
@@ -260,11 +278,21 @@ func LoadConfig() Config {
 		fmt.Fprintf(os.Stderr, "读取配置文件失败: %v\n", err)
 		return defaultConfig()
 	}
+	if err := os.Chmod(path, 0600); err != nil {
+		Warnf("无法收紧配置文件权限 %s: %v", path, err)
+	}
 
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "解析配置文件失败: %v\n", err)
 		return defaultConfig()
+	}
+
+	// 兼容旧配置：为历史订阅补齐稳定 ID，避免后续 API/UI 只能依赖名称定位。
+	for i := range cfg.Subscriptions {
+		if cfg.Subscriptions[i].ID == "" {
+			cfg.Subscriptions[i].ID = newSubscriptionID()
+		}
 	}
 
 	// 确保路径字段非空
@@ -316,7 +344,7 @@ func (c *Config) Flush() error {
 
 	// 原子写入：先写临时文件再重命名
 	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
 		Errorf("配置写入失败: path=%s err=%v", tmpPath, err)
 		return fmt.Errorf("写入临时配置文件失败: %w", err)
 	}
@@ -325,6 +353,9 @@ func (c *Config) Flush() error {
 		_ = os.Remove(tmpPath)
 		Errorf("配置替换失败: path=%s err=%v", path, err)
 		return fmt.Errorf("替换配置文件失败: %w", err)
+	}
+	if err := os.Chmod(path, 0600); err != nil {
+		return fmt.Errorf("收紧配置文件权限失败: %w", err)
 	}
 
 	Infof("配置已保存: path=%s", path)
@@ -354,7 +385,7 @@ func SanitizeFileName(name string) string {
 	return sanitized
 }
 
-// FindSubscriptionByName 按名称查找订阅索引
+// FindSubscriptionByName 按显示名称查找订阅索引。
 func (c *Config) FindSubscriptionByName(name string) int {
 	for i, s := range c.Subscriptions {
 		if s.Name == name {
@@ -362,6 +393,24 @@ func (c *Config) FindSubscriptionByName(name string) int {
 		}
 	}
 	return -1
+}
+
+// FindSubscriptionByID 按稳定 ID 查找订阅索引。
+func (c *Config) FindSubscriptionByID(id string) int {
+	for i, s := range c.Subscriptions {
+		if s.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// FindSubscriptionByIdentifier 接受稳定 ID；为兼容旧 UI/API，也接受显示名称。
+func (c *Config) FindSubscriptionByIdentifier(identifier string) int {
+	if idx := c.FindSubscriptionByID(identifier); idx >= 0 {
+		return idx
+	}
+	return c.FindSubscriptionByName(identifier)
 }
 
 // AddSubscription 添加订阅
@@ -376,6 +425,7 @@ func (c *Config) AddSubscription(name, url string) error {
 		c.Subscriptions[idx].URL = url
 	} else {
 		c.Subscriptions = append(c.Subscriptions, SubscriptionMeta{
+			ID:   newSubscriptionID(),
 			Name: name,
 			URL:  url,
 		})
@@ -391,15 +441,22 @@ func (c *Config) RemoveSubscription(name string) error {
 		return fmt.Errorf("订阅不存在: %s", name)
 	}
 
-	// 从列表中移除
+	// 从列表中移除，并保持 ActiveSubscription 指向同一个逻辑订阅。
 	c.Subscriptions = append(c.Subscriptions[:idx], c.Subscriptions[idx+1:]...)
-
-	// 调整激活索引
-	if c.ActiveSubscription >= len(c.Subscriptions) {
+	switch {
+	case len(c.Subscriptions) == 0:
+		c.ActiveSubscription = -1
+	case c.ActiveSubscription == idx:
+		// 删除当前激活订阅后，优先选择同位置的下一项；若删除的是末项则选择前一项。
+		if idx >= len(c.Subscriptions) {
+			c.ActiveSubscription = len(c.Subscriptions) - 1
+		} else {
+			c.ActiveSubscription = idx
+		}
+	case c.ActiveSubscription > idx:
+		c.ActiveSubscription--
+	case c.ActiveSubscription >= len(c.Subscriptions):
 		c.ActiveSubscription = len(c.Subscriptions) - 1
-	}
-	if c.ActiveSubscription < 0 && len(c.Subscriptions) > 0 {
-		c.ActiveSubscription = 0
 	}
 
 	return c.Flush()

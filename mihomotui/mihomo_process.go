@@ -40,7 +40,7 @@ func (p *MihomoProcess) Start() error {
 	cfg := GlobalConfig()
 	mihomoDir := filepath.Dir(cfg.MihomoConfigPath)
 	// 自动创建 mihomo 工作目录
-	if err := os.MkdirAll(mihomoDir, 0755); err != nil {
+	if err := os.MkdirAll(mihomoDir, 0700); err != nil {
 		p.mu.Unlock()
 		return fmt.Errorf("创建 mihomo 工作目录失败: %w", err)
 	}

@@ -169,10 +169,12 @@ func syncConfig() error {
 // ensureDaemon 确保 IPC 守护进程已启动
 // standalone 为 true 时，若服务端未运行则自动启动嵌入式服务端
 func ensureDaemon(standalone bool) error {
-	// 检查服务端是否已运行
-	if mihomotui.IPCCheckDaemon() {
+	// 检查服务端是否已运行；权限不足必须直接提示，不能误报为服务未运行。
+	if err := mihomotui.IPCProbeDaemon(); err == nil {
 		fmt.Println("[mihomo-tui] 已连接到独立服务端（分体模式）")
 		return nil
+	} else if mihomotui.IsIPCPermissionError(err) {
+		return err
 	}
 
 	if !standalone {

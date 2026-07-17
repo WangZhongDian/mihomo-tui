@@ -9,6 +9,10 @@ After=network.target
 [Service]
 Type=simple
 User={{.User}}
+UMask=0077
+RuntimeDirectory=mihomo-tui
+RuntimeDirectoryMode=0750
+# root daemon 会将 socket 设为 root:mihomo-tui 0660；mihomo-tui 为只读组，mihomo-tui-operator 可管理订阅。
 ExecStart={{.ExecPath}} server
 ExecStop={{.ExecPath}} cleanup
 Restart=on-failure

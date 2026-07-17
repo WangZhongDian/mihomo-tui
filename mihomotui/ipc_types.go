@@ -14,7 +14,9 @@ type ConfigResponse struct {
 
 // SubscriptionImportRequest 导入订阅请求
 type SubscriptionImportRequest struct {
-	URL string `json:"url"`
+	Name   string `json:"name,omitempty"`
+	URL    string `json:"url,omitempty"`
+	Manual bool   `json:"manual,omitempty"`
 }
 
 // ProxySelectRequest 选择代理请求

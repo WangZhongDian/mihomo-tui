@@ -7,6 +7,20 @@ import (
 	"path/filepath"
 )
 
+// handleMihomoAPICredentials 向通过 IPC 授权的本地客户端提供连接 mihomo API 所需的最小凭据。
+// 常规 /config 响应始终掩码 secret，避免日志、调试输出和无意的配置同步泄露它。
+func (d *Daemon) handleMihomoAPICredentials(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, fmt.Errorf("方法不允许"))
+		return
+	}
+	cfg := GlobalConfig()
+	writeJSON(w, http.StatusOK, ok(map[string]string{
+		"external_controller": cfg.Mihomo.ExternalController,
+		"secret":              cfg.Mihomo.Secret,
+	}))
+}
+
 func (d *Daemon) handleMihomoStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, fmt.Errorf("方法不允许"))

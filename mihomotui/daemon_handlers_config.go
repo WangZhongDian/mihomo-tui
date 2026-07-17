@@ -8,16 +8,25 @@ import (
 func (d *Daemon) handleConfig(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		cfg := GlobalConfig()
-		writeJSON(w, http.StatusOK, ok(ConfigResponse{Config: *cfg}))
+		// Secret 不跟随常规配置响应发送；需要连接 mihomo API 的授权客户端
+		// 必须通过受 IPC peer credential 保护的专用端点获取。
+		cfg := *GlobalConfig()
+		cfg.Mihomo.Secret = ""
+		writeJSON(w, http.StatusOK, ok(ConfigResponse{Config: cfg}))
 	case http.MethodPost:
 		var req Config
 		if err := readJSON(r, &req); err != nil {
 			writeError(w, http.StatusBadRequest, fmt.Errorf("解析配置失败: %w", err))
 			return
 		}
+		// /config 不再返回 secret。客户端若提交被掩码的配置，必须保留服务端已有 secret，
+		// 否则会导致运行中的 mihomo API 鉴权失效。
+		current := GlobalConfig()
+		if req.Mihomo.Secret == "" {
+			req.Mihomo.Secret = current.Mihomo.Secret
+		}
 		Infof("收到配置更新请求: system.tun=%v proxy_mode=%s", req.System.TUN, req.ProxyMode)
-		oldTUN := GlobalConfig().System.TUN
+		oldTUN := current.System.TUN
 		d.mu.Lock()
 		SetGlobalConfig(req)
 		cfg := GlobalConfig()

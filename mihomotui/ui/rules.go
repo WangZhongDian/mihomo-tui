@@ -351,13 +351,31 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 		if idx < 0 || idx >= len(ruleProviders) {
 			return
 		}
-		ruleProviders[idx].UpdatedAt = time.Now().Format("2006-01-02 15:04")
-		si := cfg.FindRuleProviderByName(ruleProviders[idx].Name)
-		if si >= 0 {
-			cfg.RuleProviderSubscriptions[si].UpdatedAt = ruleProviders[idx].UpdatedAt
-			_ = cfg.Flush()
-		}
-		refreshCards()
+		name := ruleProviders[idx].Name
+		go func() {
+			client, err := mihomotui.GetIPCClient()
+			if err != nil {
+				app.QueueUpdateDraw(func() { showModal("刷新失败", err.Error()) })
+				return
+			}
+			if err := client.IPCRefreshRuleProvider(name); err != nil {
+				app.QueueUpdateDraw(func() { showModal("刷新失败", err.Error()) })
+				return
+			}
+			cfg2, err := client.IPCGetConfig()
+			app.QueueUpdateDraw(func() {
+				if err != nil {
+					showModal("刷新成功，但同步失败", err.Error())
+					return
+				}
+				cfg = cfg2
+				mihomotui.SetGlobalConfig(*cfg2)
+				mihomotui.ResetMihomoAPI()
+				reloadRps()
+				refreshCards()
+				showModal("刷新成功", fmt.Sprintf("已刷新规则订阅: %s", name))
+			})
+		}()
 	}
 
 	deleteRp = func(idx int) {
@@ -382,6 +400,7 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 			cfg2, _ := client.IPCGetConfig()
 			app.QueueUpdateDraw(func() {
 				if cfg2 != nil {
+					cfg = cfg2
 					mihomotui.SetGlobalConfig(*cfg2)
 					mihomotui.ResetMihomoAPI()
 				}
@@ -412,11 +431,15 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 			if pg == "" {
 				pg = "Auto"
 			}
+			statusText := "[green]上次刷新成功[-]"
+			if rp.LastError != "" {
+				statusText = fmt.Sprintf("[red]刷新失败: %s[-]", mihomotui.RedactURLInText(rp.LastError))
+			}
 			infoText := fmt.Sprintf(
 				"[blue::b] %s[-:-:-]    行为: %s    格式: %s    间隔: %ds\n"+
-					" 来源: %s    更新: %s    策略: %s",
+					" 来源: %s    更新: %s    策略: %s  %s",
 				rp.Name, rp.Behavior, rp.Format, rp.Interval,
-				rp.URL, rp.UpdatedAt, pg,
+				mihomotui.RedactURL(rp.URL), rp.UpdatedAt, pg, statusText,
 			)
 			info := tview.NewTextView().SetText(infoText).SetDynamicColors(true)
 			refreshBtn := tview.NewButton(" ↻ ")
@@ -560,6 +583,7 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 			cfg2, _ := client.IPCGetConfig()
 			app.QueueUpdateDraw(func() {
 				if cfg2 != nil {
+					cfg = cfg2
 					mihomotui.SetGlobalConfig(*cfg2)
 					mihomotui.ResetMihomoAPI()
 				}
@@ -697,6 +721,7 @@ func newCustomRulesPage(app *tview.Application, pages *tview.Pages) tview.Primit
 			cfg2, _ := client.IPCGetConfig()
 			app.QueueUpdateDraw(func() {
 				if cfg2 != nil {
+					cfg = cfg2
 					mihomotui.SetGlobalConfig(*cfg2)
 				}
 				refreshList()
@@ -776,6 +801,7 @@ func newCustomRulesPage(app *tview.Application, pages *tview.Pages) tview.Primit
 			cfg2, _ := client.IPCGetConfig()
 			app.QueueUpdateDraw(func() {
 				if cfg2 != nil {
+					cfg = cfg2
 					mihomotui.SetGlobalConfig(*cfg2)
 				}
 				ruleInput.SetText("")

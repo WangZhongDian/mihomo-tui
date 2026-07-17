@@ -3,7 +3,6 @@ package ui
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -12,11 +11,15 @@ import (
 
 // Subscription 订阅数据模型
 type Subscription struct {
-	Name      string
-	URL       string
-	UpdatedAt string
-	UsedGB    float64
-	TotalGB   float64
+	ID            string
+	Name          string
+	URL           string
+	UpdatedAt     string
+	LastSuccessAt string
+	LastFailureAt string
+	LastError     string
+	UsedGB        float64
+	TotalGB       float64
 }
 
 // NewSubscriptionPage 创建订阅页面
@@ -29,11 +32,15 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 		subscriptions = make([]Subscription, 0, len(cfg.Subscriptions))
 		for _, meta := range cfg.Subscriptions {
 			subscriptions = append(subscriptions, Subscription{
-				Name:      meta.Name,
-				URL:       meta.URL,
-				UpdatedAt: meta.UpdatedAt,
-				UsedGB:    meta.UsedGB,
-				TotalGB:   meta.TotalGB,
+				ID:            meta.ID,
+				Name:          meta.Name,
+				URL:           meta.URL,
+				UpdatedAt:     meta.UpdatedAt,
+				LastSuccessAt: meta.LastSuccessAt,
+				LastFailureAt: meta.LastFailureAt,
+				LastError:     meta.LastError,
+				UsedGB:        meta.UsedGB,
+				TotalGB:       meta.TotalGB,
 			})
 		}
 	}
@@ -122,22 +129,41 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 	deleteSub := func(idx int) {}
 	refreshCards := func() {}
 
-	// 刷新指定订阅（仅更新时间戳，流量数据应由服务端同步）
+	// 刷新指定订阅：由 daemon 实际请求远端订阅、更新元数据，并在激活时应用新配置。
 	refreshSub = func(idx int) {
 		if idx < 0 || idx >= len(subscriptions) {
 			return
 		}
-		sub := &subscriptions[idx]
-		sub.UpdatedAt = time.Now().Format(mihomotui.TimeFormatShort)
-		// 同步回 globalConfig
-		si := cfg.FindSubscriptionByName(sub.Name)
-		if si >= 0 {
-			cfg.Subscriptions[si].UpdatedAt = sub.UpdatedAt
-			if err := cfg.Flush(); err != nil {
-				mihomotui.Warnf("刷新订阅后保存配置失败: %v", err)
-			}
+		sub := subscriptions[idx]
+		name := sub.Name
+		identifier := sub.ID
+		if identifier == "" {
+			identifier = name // 兼容未迁移稳定 ID 的历史配置。
 		}
-		refreshCards()
+		go func() {
+			client, err := mihomotui.GetIPCClient()
+			if err != nil {
+				app.QueueUpdateDraw(func() { showModal("刷新失败", err.Error()) })
+				return
+			}
+			if err := client.IPCRefreshSubscription(identifier); err != nil {
+				app.QueueUpdateDraw(func() { showModal("刷新失败", err.Error()) })
+				return
+			}
+			cfg2, err := client.IPCGetConfig()
+			app.QueueUpdateDraw(func() {
+				if err != nil {
+					showModal("刷新成功，但同步失败", err.Error())
+					return
+				}
+				cfg = cfg2
+				mihomotui.SetGlobalConfig(*cfg2)
+				mihomotui.ResetMihomoAPI()
+				reloadSubs()
+				refreshCards()
+				showModal("刷新成功", fmt.Sprintf("已刷新订阅: %s", name))
+			})
+		}()
 	}
 
 	// 删除指定订阅（通过 IPC）
@@ -145,7 +171,12 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 		if idx < 0 || idx >= len(subscriptions) {
 			return
 		}
-		name := subscriptions[idx].Name
+		sub := subscriptions[idx]
+		name := sub.Name
+		identifier := sub.ID
+		if identifier == "" {
+			identifier = name // 兼容未迁移稳定 ID 的历史配置。
+		}
 		go func() {
 			client, err := mihomotui.GetIPCClient()
 			if err != nil {
@@ -154,7 +185,7 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 				})
 				return
 			}
-			if err := client.IPCDeleteSubscription(name); err != nil {
+			if err := client.IPCDeleteSubscription(identifier); err != nil {
 				app.QueueUpdateDraw(func() {
 					showModal("删除失败", err.Error())
 				})
@@ -163,6 +194,7 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 			cfg2, _ := client.IPCGetConfig()
 			app.QueueUpdateDraw(func() {
 				if cfg2 != nil {
+					cfg = cfg2
 					mihomotui.SetGlobalConfig(*cfg2)
 					mihomotui.ResetMihomoAPI()
 				}
@@ -205,11 +237,15 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 			bar := strings.Repeat("━", filled) + strings.Repeat("─", progressWidth-filled)
 
 			// 信息文本（3行）
+			statusText := "[green]上次刷新成功[-]"
+			if sub.LastError != "" {
+				statusText = fmt.Sprintf("[red]刷新失败: %s[-]", mihomotui.RedactURLInText(sub.LastError))
+			}
 			infoText := fmt.Sprintf(
 				"[blue::b] %s[-:-:-]    %.2fGB / %.2fGB\n"+
 					" 来源: %s    更新: %s    %.0f%%\n"+
-					" [%s]%s[-]",
-				sub.Name, sub.UsedGB, sub.TotalGB, sub.URL, sub.UpdatedAt, percent, mihomotui.ColorInfo, bar,
+					" [%s]%s[-]  %s",
+				sub.Name, sub.UsedGB, sub.TotalGB, mihomotui.RedactURL(sub.URL), sub.UpdatedAt, percent, mihomotui.ColorInfo, bar, statusText,
 			)
 			info := tview.NewTextView().SetText(infoText).SetDynamicColors(true)
 
@@ -217,7 +253,12 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 			applyBtn := tview.NewButton(" ✓ ")
 			applyBtn.SetBorder(false)
 			applyBtn.SetSelectedFunc(func() {
-				subName := subscriptions[idx].Name
+				subscription := subscriptions[idx]
+				subName := subscription.Name
+				identifier := subscription.ID
+				if identifier == "" {
+					identifier = subName // 兼容未迁移稳定 ID 的历史配置。
+				}
 				go func() {
 					client, err := mihomotui.GetIPCClient()
 					if err != nil {
@@ -226,7 +267,7 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 						})
 						return
 					}
-					if err := client.IPCApplySubscription(subName); err != nil {
+					if err := client.IPCApplySubscription(identifier); err != nil {
 						app.QueueUpdateDraw(func() {
 							showModal("应用失败", err.Error())
 						})
@@ -337,6 +378,7 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 			cfg2, _ := client.IPCGetConfig()
 			app.QueueUpdateDraw(func() {
 				if cfg2 != nil {
+					cfg = cfg2
 					mihomotui.SetGlobalConfig(*cfg2)
 					mihomotui.ResetMihomoAPI()
 				}
@@ -359,15 +401,14 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 				})
 				return
 			}
-			if err := client.IPCImportSubscription("手动配置"); err != nil {
-				// 手动配置的导入会失败，这里我们直接通过配置修改
-				// 回退到本地操作
-				_ = cfg.AddSubscription("新建订阅", "手动配置")
-				_ = client.IPCUpdateConfig(cfg)
+			if err := client.IPCImportSubscriptionWithRequest(mihomotui.SubscriptionImportRequest{Name: "新建订阅", Manual: true}); err != nil {
+				app.QueueUpdateDraw(func() { showModal("新建失败", err.Error()) })
+				return
 			}
 			cfg2, _ := client.IPCGetConfig()
 			app.QueueUpdateDraw(func() {
 				if cfg2 != nil {
+					cfg = cfg2
 					mihomotui.SetGlobalConfig(*cfg2)
 					mihomotui.ResetMihomoAPI()
 				}

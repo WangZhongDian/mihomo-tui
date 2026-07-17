@@ -22,16 +22,6 @@ type Daemon struct {
 	upgradeProgress UpgradeProgress
 }
 
-// socketPath 返回 UDS socket 文件路径（固定路径，支持 root server + 普通用户 TUI）
-func socketPath() string {
-	return filepath.Join(SocketDir, SocketFile)
-}
-
-// SocketPath 返回 UDS socket 文件路径（导出给 ui 包使用）
-func SocketPath() string {
-	return socketPath()
-}
-
 // RunDaemon 启动 IPC 后台服务
 func RunDaemon() error {
 	d := &Daemon{}
@@ -69,8 +59,10 @@ func (d *Daemon) Run() error {
 
 	// 自动创建 mihomo 工作目录
 	mihomoDir := filepath.Join(configDir, "mihomo")
-	if err := os.MkdirAll(mihomoDir, 0755); err != nil {
+	if err := os.MkdirAll(mihomoDir, 0700); err != nil {
 		Warnf("创建 mihomo 工作目录失败: %v", err)
+	} else if err := os.Chmod(mihomoDir, 0700); err != nil {
+		Warnf("收紧 mihomo 工作目录权限失败: %v", err)
 	}
 
 	// 初始化 mihomo API 客户端
@@ -79,14 +71,19 @@ func (d *Daemon) Run() error {
 	// 初始化 mihomo 进程管理器
 	d.mihomoProcess = NewMihomoProcess()
 
-	// 确保 socket 父目录存在（权限 0777，确保任何用户都能清理旧 socket）
-	sock := socketPath()
+	// 初始化 IPC 授权器，并以最小权限创建 socket 目录。root daemon 只允许
+	// mihomo-tui 组成员通过 socket 访问；普通 daemon 则只允许启动它的用户访问。
+	authorizer, err := newIPCAuthorizer()
+	if err != nil {
+		return fmt.Errorf("初始化 IPC 授权失败: %w", err)
+	}
+	sock := daemonSocketPath()
 	sockDir := filepath.Dir(sock)
-	if err := os.MkdirAll(sockDir, 0777); err != nil {
+	if err := os.MkdirAll(sockDir, 0750); err != nil {
 		return fmt.Errorf("创建 socket 目录失败: %w", err)
 	}
-	if err := os.Chmod(sockDir, 0777); err != nil {
-		Warnf("设置 socket 目录权限失败: %v", err)
+	if err := authorizer.configureSocketDirectory(sockDir); err != nil {
+		return err
 	}
 
 	// 清理旧 socket
@@ -107,18 +104,14 @@ func (d *Daemon) Run() error {
 	}
 	defer listener.Close()
 
-	// 设置 socket 权限：root 启动时 0666（允许任何用户连接），普通用户 0660
-	sockPerm := os.FileMode(0660)
-	if os.Geteuid() == 0 {
-		sockPerm = 0666
-	}
-	if err := os.Chmod(sock, sockPerm); err != nil {
-		Warnf("设置 socket 权限失败: %v", err)
+	if err := authorizer.configureSocketPermissions(sock); err != nil {
+		return fmt.Errorf("设置 IPC socket 权限失败: %w", err)
 	}
 
 	d.listener = listener
 	d.server = &http.Server{
-		Handler: d.router(),
+		Handler:     authorizer.middleware(d.router()),
+		ConnContext: authorizer.connContext,
 	}
 
 	Infof("IPC 服务已启动: %s", sock)
@@ -152,6 +145,7 @@ func (d *Daemon) router() http.Handler {
 
 	// mihomo 管理
 	mux.HandleFunc("/api/v1/mihomo/status", d.handleMihomoStatus)
+	mux.HandleFunc("/api/v1/mihomo/api-credentials", d.handleMihomoAPICredentials)
 	mux.HandleFunc("/api/v1/mihomo/start", d.handleMihomoStart)
 	mux.HandleFunc("/api/v1/mihomo/stop", d.handleMihomoStop)
 	mux.HandleFunc("/api/v1/mihomo/restart", d.handleMihomoRestart)

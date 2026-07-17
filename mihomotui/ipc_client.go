@@ -8,19 +8,24 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 )
 
 // IPCClient IPC 客户端，通过 Unix Domain Socket 与服务端通讯
 type IPCClient struct {
-	client  *http.Client
-	baseURL string
+	client     *http.Client
+	baseURL    string
+	socketPath string
 }
 
 // NewIPCClient 创建 IPC 客户端
 func NewIPCClient() (*IPCClient, error) {
-	sock := socketPath()
+	sock, err := clientSocketPathWithError()
+	if err != nil {
+		return nil, err
+	}
 	client := &http.Client{
 		Timeout: DefaultIPCRequestTimeout,
 		Transport: &http.Transport{
@@ -30,8 +35,9 @@ func NewIPCClient() (*IPCClient, error) {
 		},
 	}
 	return &IPCClient{
-		client:  client,
-		baseURL: "http://daemon",
+		client:     client,
+		baseURL:    "http://daemon",
+		socketPath: sock,
 	}, nil
 }
 
@@ -74,7 +80,13 @@ func (c *IPCClient) request(method, path string, body []byte, query map[string]s
 		// 尝试解析服务端返回的 JSON 错误信息
 		var apiErr APIResponse
 		if err := json.Unmarshal(data, &apiErr); err == nil && apiErr.Error != "" {
+			if resp.StatusCode == http.StatusForbidden {
+				return nil, fmt.Errorf("%w：%s", ErrIPCPermissionDenied, apiErr.Error)
+			}
 			return nil, fmt.Errorf("%s", apiErr.Error)
+		}
+		if resp.StatusCode == http.StatusForbidden {
+			return nil, fmt.Errorf("%w: HTTP %d: %s", ErrIPCPermissionDenied, resp.StatusCode, string(data))
 		}
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(data))
 	}
@@ -105,7 +117,7 @@ func (c *IPCClient) streamRequest(method, path string, query map[string]string) 
 	client := &http.Client{
 		Transport: &http.Transport{
 			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
-				return net.Dial("unix", socketPath())
+				return net.Dial("unix", c.socketPath)
 			},
 		},
 	}
@@ -178,7 +190,24 @@ func (c *IPCClient) IPCGetConfig() (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("解析配置响应失败: %w", err)
 	}
+	credentials, err := c.IPCGetMihomoAPICredentials()
+	if err != nil {
+		return nil, fmt.Errorf("获取 mihomo API 凭据失败: %w", err)
+	}
+	if controller := credentials["external_controller"]; controller != "" {
+		cfgResp.Config.Mihomo.ExternalController = controller
+	}
+	cfgResp.Config.Mihomo.Secret = credentials["secret"]
 	return &cfgResp.Config, nil
+}
+
+// IPCGetMihomoAPICredentials 获取受 IPC 授权保护的 mihomo API 最小连接凭据。
+func (c *IPCClient) IPCGetMihomoAPICredentials() (map[string]string, error) {
+	resp, err := c.requestJSON(http.MethodGet, "/api/v1/mihomo/api-credentials", nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return unmarshalData[map[string]string](resp)
 }
 
 // IPCUpdateConfig 更新服务端配置
@@ -202,9 +231,13 @@ func (c *IPCClient) IPCGetSubscriptions() ([]SubscriptionMeta, error) {
 	return unmarshalData[[]SubscriptionMeta](resp)
 }
 
-// IPCImportSubscription 导入订阅
-func (c *IPCClient) IPCImportSubscription(url string) error {
-	req := SubscriptionImportRequest{URL: url}
+// IPCImportSubscription 导入远端订阅。
+func (c *IPCClient) IPCImportSubscription(rawURL string) error {
+	return c.IPCImportSubscriptionWithRequest(SubscriptionImportRequest{URL: rawURL})
+}
+
+// IPCImportSubscriptionWithRequest 导入远端订阅或创建手动订阅。
+func (c *IPCClient) IPCImportSubscriptionWithRequest(req SubscriptionImportRequest) error {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return err
@@ -215,19 +248,19 @@ func (c *IPCClient) IPCImportSubscription(url string) error {
 
 // IPCRefreshSubscription 刷新订阅
 func (c *IPCClient) IPCRefreshSubscription(name string) error {
-	_, err := c.requestJSON(http.MethodPut, "/api/v1/subscriptions/"+name, nil, nil)
+	_, err := c.requestJSON(http.MethodPut, "/api/v1/subscriptions/"+url.PathEscape(name), nil, nil)
 	return err
 }
 
 // IPCDeleteSubscription 删除订阅
 func (c *IPCClient) IPCDeleteSubscription(name string) error {
-	_, err := c.requestJSON(http.MethodDelete, "/api/v1/subscriptions/"+name, nil, nil)
+	_, err := c.requestJSON(http.MethodDelete, "/api/v1/subscriptions/"+url.PathEscape(name), nil, nil)
 	return err
 }
 
 // IPCApplySubscription 应用订阅（生成 mihomo 配置）
 func (c *IPCClient) IPCApplySubscription(name string) error {
-	_, err := c.requestJSON(http.MethodPost, "/api/v1/subscriptions/"+name+"/apply", nil, nil)
+	_, err := c.requestJSON(http.MethodPost, "/api/v1/subscriptions/"+url.PathEscape(name)+"/apply", nil, nil)
 	return err
 }
 
@@ -357,28 +390,42 @@ func (c *IPCClient) IPCGetConfigDir() (string, error) {
 	return result["config_dir"], nil
 }
 
-// IPCCheckDaemon 检查守护进程是否运行
-func IPCCheckDaemon() bool {
+// IPCProbeDaemon 检查守护进程并保留连接失败原因，避免把权限不足误报为服务未运行。
+func IPCProbeDaemon() error {
 	client, err := NewIPCClient()
 	if err != nil {
-		return false
+		return err
 	}
 	resp, err := client.do(http.MethodGet, "/api/v1/ping", nil, nil)
 	if err != nil {
-		return false
+		return err
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("IPC 服务返回异常状态: %s", resp.Status)
+	}
+	return nil
 }
 
-// IPCWaitForDaemon 等待守护进程就绪，超时返回错误
+// IPCCheckDaemon 检查守护进程是否运行
+func IPCCheckDaemon() bool {
+	return IPCProbeDaemon() == nil
+}
+
+// IPCWaitForDaemon 等待守护进程就绪，超时返回最后一次连接错误。
 func IPCWaitForDaemon(timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
+	var lastErr error
 	for time.Now().Before(deadline) {
-		if IPCCheckDaemon() {
+		if err := IPCProbeDaemon(); err == nil {
 			return nil
+		} else {
+			lastErr = err
 		}
 		time.Sleep(DefaultStreamInterval)
+	}
+	if lastErr != nil {
+		return fmt.Errorf("等待守护进程超时（%v），最后错误: %w", timeout, lastErr)
 	}
 	return fmt.Errorf("等待守护进程超时（%v）", timeout)
 }
@@ -406,12 +453,12 @@ func (c *IPCClient) IPCImportRuleProvider(req RuleProviderImportRequest) error {
 
 // IPCRefreshRuleProvider 刷新规则订阅
 func (c *IPCClient) IPCRefreshRuleProvider(name string) error {
-	_, err := c.requestJSON(http.MethodPut, "/api/v1/rule-providers/"+name, nil, nil)
+	_, err := c.requestJSON(http.MethodPut, "/api/v1/rule-providers/"+url.PathEscape(name), nil, nil)
 	return err
 }
 
 // IPCDeleteRuleProvider 删除规则订阅
 func (c *IPCClient) IPCDeleteRuleProvider(name string) error {
-	_, err := c.requestJSON(http.MethodDelete, "/api/v1/rule-providers/"+name, nil, nil)
+	_, err := c.requestJSON(http.MethodDelete, "/api/v1/rule-providers/"+url.PathEscape(name), nil, nil)
 	return err
 }

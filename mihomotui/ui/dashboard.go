@@ -37,7 +37,7 @@ func buildSubCardText() string {
 			" 流量: %.2fGB / %.2fGB\n\n"+
 			" %.0f%%\n"+
 			" %s────────────────────",
-		mihomotui.ColorHeader, sub.Name, sub.URL, sub.UpdatedAt,
+		mihomotui.ColorHeader, sub.Name, mihomotui.RedactURL(sub.URL), sub.UpdatedAt,
 		sub.UsedGB, sub.TotalGB, percent, bar,
 	)
 }

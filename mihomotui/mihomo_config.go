@@ -576,18 +576,24 @@ func (c *Config) GenerateMihomoConfig() error {
 	}
 
 	mihomoDir := filepath.Join(GetConfigDir(), "mihomo")
-	if err := os.MkdirAll(mihomoDir, 0755); err != nil {
+	if err := os.MkdirAll(mihomoDir, 0700); err != nil {
 		return fmt.Errorf("创建 mihomo 配置目录失败: %w", err)
+	}
+	if err := os.Chmod(mihomoDir, 0700); err != nil {
+		return fmt.Errorf("收紧 mihomo 配置目录权限失败: %w", err)
 	}
 	configPath := filepath.Join(mihomoDir, MIHOMO_CONFIG_NAME)
 
 	tmpPath := configPath + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
 		return fmt.Errorf("写入临时 mihomo 配置失败: %w", err)
 	}
 	if err := os.Rename(tmpPath, configPath); err != nil {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("替换 mihomo 配置文件失败: %w", err)
+	}
+	if err := os.Chmod(configPath, 0600); err != nil {
+		return fmt.Errorf("收紧 mihomo 配置文件权限失败: %w", err)
 	}
 
 	// 同步更新配置中的 MihomoConfigPath
