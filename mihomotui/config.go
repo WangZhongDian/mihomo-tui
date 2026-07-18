@@ -62,17 +62,28 @@ const (
 	SubscriptionSourceContent SubscriptionSource = "content"
 )
 
-// SubscriptionPool 是顺序主备订阅集合。Members 的顺序即优先级。
+// SubscriptionPoolMode controls how enabled members are exposed to mihomo.
+type SubscriptionPoolMode string
+
+const (
+	// SubscriptionPoolModeFailover exposes only the active member; Members order is primary/backup priority.
+	SubscriptionPoolModeFailover SubscriptionPoolMode = "failover"
+	// SubscriptionPoolModeMerge exposes every member with a valid cache to mihomo simultaneously.
+	SubscriptionPoolModeMerge SubscriptionPoolMode = "merge"
+)
+
+// SubscriptionPool 是订阅集合。主备模式下 Members 顺序即故障切换优先级；合并模式下全部成员同时生效。
 type SubscriptionPool struct {
-	ID               string   `yaml:"id" json:"id"`
-	Name             string   `yaml:"name" json:"name"`
-	Members          []string `yaml:"members" json:"members"`
-	ActiveMemberID   string   `yaml:"active_member_id" json:"active_member_id"`
-	Enabled          bool     `yaml:"enabled" json:"enabled"`
-	RefreshInterval  int      `yaml:"refresh_interval" json:"refresh_interval"`
-	LastSwitchAt     string   `yaml:"last_switch_at,omitempty" json:"last_switch_at,omitempty"`
-	LastSwitchReason string   `yaml:"last_switch_reason,omitempty" json:"last_switch_reason,omitempty"`
-	Degraded         bool     `yaml:"degraded" json:"degraded"`
+	ID               string               `yaml:"id" json:"id"`
+	Name             string               `yaml:"name" json:"name"`
+	Mode             SubscriptionPoolMode `yaml:"mode,omitempty" json:"mode,omitempty"`
+	Members          []string             `yaml:"members" json:"members"`
+	ActiveMemberID   string               `yaml:"active_member_id" json:"active_member_id"`
+	Enabled          bool                 `yaml:"enabled" json:"enabled"`
+	RefreshInterval  int                  `yaml:"refresh_interval" json:"refresh_interval"`
+	LastSwitchAt     string               `yaml:"last_switch_at,omitempty" json:"last_switch_at,omitempty"`
+	LastSwitchReason string               `yaml:"last_switch_reason,omitempty" json:"last_switch_reason,omitempty"`
+	Degraded         bool                 `yaml:"degraded" json:"degraded"`
 }
 
 // SubscriptionMeta 保存订阅来源元数据；订阅正文只存在 CacheFile 指向的私有缓存中。

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -125,5 +126,73 @@ func TestCreatePoolMovesMembersFromDefaultPool(t *testing.T) {
 	}
 	if members := got.SubscriptionPools[1].Members; len(members) != 1 || members[0] != "sub-1" {
 		t.Fatalf("new pool does not own member: %+v", got.SubscriptionPools[1])
+	}
+}
+
+func TestMergePoolUsesAllCachedMembers(t *testing.T) {
+	useTestConfigDir(t)
+	cfg := defaultConfig()
+	one, _, err := writeSubscriptionCache("one", []byte("ss://one"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, _, err := writeSubscriptionCache("two", []byte("ss://two"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Subscriptions = []SubscriptionMeta{
+		{ID: "one", Name: "一", CacheFile: one},
+		{ID: "two", Name: "二", CacheFile: two},
+		{ID: "missing", Name: "缺失", CacheFile: filepath.Join(t.TempDir(), "missing.yaml")},
+	}
+	cfg.SubscriptionPools = []SubscriptionPool{{
+		ID: "pool", Name: "合并池", Mode: SubscriptionPoolModeMerge, Enabled: true,
+		Members: []string{"one", "two", "missing"}, ActiveMemberID: "one",
+	}}
+
+	subs, err := cfg.activePoolSubscriptions()
+	if err != nil {
+		t.Fatalf("activePoolSubscriptions() error = %v", err)
+	}
+	if len(subs) != 2 || subs[0].ID != "one" || subs[1].ID != "two" {
+		t.Fatalf("merged subscriptions = %#v, want both cached members in order", subs)
+	}
+
+	providers, _, _, err := cfg.buildProxyConfig()
+	if err != nil {
+		t.Fatalf("buildProxyConfig() error = %v", err)
+	}
+	if len(providers) != 2 {
+		t.Fatalf("provider count = %d, want 2", len(providers))
+	}
+}
+
+func TestMergePoolDoesNotFailOverOnMemberFailure(t *testing.T) {
+	useTestConfigDir(t)
+	cfg := defaultConfig()
+	primary, _, err := writeSubscriptionCache("primary", []byte("ss://primary"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup, _, err := writeSubscriptionCache("backup", []byte("ss://backup"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Subscriptions = []SubscriptionMeta{{ID: "primary", CacheFile: primary, FailureCount: subscriptionFailureThreshold}, {ID: "backup", CacheFile: backup}}
+	cfg.SubscriptionPools = []SubscriptionPool{{ID: "pool", Name: "合并池", Mode: SubscriptionPoolModeMerge, Members: []string{"primary", "backup"}, ActiveMemberID: "primary", Enabled: true}}
+	SetGlobalConfig(cfg)
+
+	(&Daemon{}).failoverSubscription("primary", os.ErrDeadlineExceeded)
+	pool := GlobalConfig().SubscriptionPools[0]
+	if pool.ActiveMemberID != "primary" || pool.Degraded {
+		t.Fatalf("merge pool must not fail over: %+v", pool)
+	}
+}
+
+func TestSubscriptionPoolModeValidation(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.SubscriptionPools = []SubscriptionPool{{ID: "pool", Name: "bad", Mode: "unexpected", Members: nil, Enabled: false}}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "运行模式非法") {
+		t.Fatalf("Validate() error = %v, want invalid mode error", err)
 	}
 }

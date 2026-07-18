@@ -229,7 +229,9 @@ func (d *Daemon) failoverSubscription(failedID string, cause error) {
 	_, err := UpdateGlobalConfig(func(cfg *Config) error {
 		for pi := range cfg.SubscriptionPools {
 			pool := &cfg.SubscriptionPools[pi]
-			if !pool.Enabled || pool.ActiveMemberID != failedID {
+			// 合并模式没有单一活动源和主备切换；成员独立刷新，失败不能移除
+			// 其他缓存节点。
+			if normalizedSubscriptionPoolMode(pool.Mode) != SubscriptionPoolModeFailover || !pool.Enabled || pool.ActiveMemberID != failedID {
 				continue
 			}
 			failed := cfg.FindSubscriptionByID(failedID)

@@ -42,11 +42,12 @@ type SubscriptionImportRequest struct {
 
 // SubscriptionPoolRequest 创建或更新订阅池；Members 顺序即故障切换优先级。
 type SubscriptionPoolRequest struct {
-	Name            string   `json:"name"`
-	Members         []string `json:"members"`
-	ActiveMemberID  string   `json:"active_member_id,omitempty"`
-	Enabled         bool     `json:"enabled"`
-	RefreshInterval int      `json:"refresh_interval,omitempty"`
+	Name            string               `json:"name"`
+	Mode            SubscriptionPoolMode `json:"mode,omitempty"`
+	Members         []string             `json:"members"`
+	ActiveMemberID  string               `json:"active_member_id,omitempty"`
+	Enabled         bool                 `json:"enabled"`
+	RefreshInterval int                  `json:"refresh_interval,omitempty"`
 }
 
 // ProxySelectRequest 选择代理请求

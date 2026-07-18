@@ -68,13 +68,20 @@ func (d *Daemon) handleSubscriptionPools(w http.ResponseWriter, r *http.Request)
 			if interval == 0 {
 				interval = defaultSubscriptionRefreshInterval
 			}
-			cfg.SubscriptionPools = append(cfg.SubscriptionPools, SubscriptionPool{ID: id, Name: req.Name, Members: req.Members, ActiveMemberID: active, Enabled: req.Enabled, RefreshInterval: interval})
+			mode := normalizedSubscriptionPoolMode(req.Mode)
+			if mode != SubscriptionPoolModeFailover && mode != SubscriptionPoolModeMerge {
+				return fmt.Errorf("订阅池运行模式非法: %q（可选 failover/merge）", req.Mode)
+			}
+			cfg.SubscriptionPools = append(cfg.SubscriptionPools, SubscriptionPool{ID: id, Name: req.Name, Mode: mode, Members: req.Members, ActiveMemberID: active, Enabled: req.Enabled, RefreshInterval: interval})
 			assignPoolMembers(cfg, len(cfg.SubscriptionPools)-1, req.Members)
 			return nil
 		})
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err)
 			return
+		}
+		if report := d.reconcileLatest("subscription-pool-create"); !report.Applied {
+			Warnf("新建订阅池应用失败: %s", report.Err)
 		}
 		writeJSON(w, http.StatusOK, ok(map[string]string{"id": id}))
 	default:
@@ -108,7 +115,12 @@ func (d *Daemon) handleSubscriptionPoolDetail(w http.ResponseWriter, r *http.Req
 				}
 			}
 			p := &cfg.SubscriptionPools[i]
+			mode := normalizedSubscriptionPoolMode(req.Mode)
+			if mode != SubscriptionPoolModeFailover && mode != SubscriptionPoolModeMerge {
+				return fmt.Errorf("订阅池运行模式非法: %q（可选 failover/merge）", req.Mode)
+			}
 			p.Name = req.Name
+			p.Mode = mode
 			p.Members = req.Members
 			p.ActiveMemberID = req.ActiveMemberID
 			p.Enabled = req.Enabled

@@ -142,6 +142,9 @@ func (c *Config) Validate() error {
 		if strings.TrimSpace(pool.Name) == "" {
 			add("订阅池名称不能为空")
 		}
+		if mode := normalizedSubscriptionPoolMode(pool.Mode); mode != SubscriptionPoolModeFailover && mode != SubscriptionPoolModeMerge {
+			add("订阅池 %q 运行模式非法: %q（可选 failover/merge）", pool.Name, pool.Mode)
+		}
 		if pool.RefreshInterval < 0 {
 			add("订阅池 %q 刷新间隔不能为负数", pool.Name)
 		}

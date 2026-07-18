@@ -57,8 +57,8 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 		}()
 	}
 
-	poolRequest := func(pool mihomotui.SubscriptionPool, members []string, active string, name string, enabled bool, interval int) mihomotui.SubscriptionPoolRequest {
-		return mihomotui.SubscriptionPoolRequest{Name: name, Members: members, ActiveMemberID: active, Enabled: enabled, RefreshInterval: interval}
+	poolRequest := func(members []string, active string, name string, mode mihomotui.SubscriptionPoolMode, enabled bool, interval int) mihomotui.SubscriptionPoolRequest {
+		return mihomotui.SubscriptionPoolRequest{Name: name, Mode: mode, Members: members, ActiveMemberID: active, Enabled: enabled, RefreshInterval: interval}
 	}
 	var showEditor func(existing *mihomotui.SubscriptionPool)
 	showEditor = func(existing *mihomotui.SubscriptionPool) {
@@ -67,20 +67,38 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 			return
 		}
 		name, enabled, interval := "新订阅池", true, 3600
+		mode := mihomotui.SubscriptionPoolModeFailover
 		members := []string{}
 		active := ""
 		if existing != nil {
 			name = existing.Name
 			enabled = existing.Enabled
 			interval = existing.RefreshInterval
+			mode = existing.Mode
+			if mode == "" {
+				mode = mihomotui.SubscriptionPoolModeFailover
+			}
 			members = append(members, existing.Members...)
 			active = existing.ActiveMemberID
 		}
 		form := tview.NewForm().SetButtonsAlign(tview.AlignRight)
 		nameField := tview.NewInputField().SetLabel("名称: ").SetText(name)
+		modeDropdown := tview.NewDropDown().SetLabel("运行模式: ")
+		modeOptions := []string{"优先级主备（仅活动源）", "合并（全部缓存成员）"}
+		modeIndex := 0
+		if mode == mihomotui.SubscriptionPoolModeMerge {
+			modeIndex = 1
+		}
+		modeDropdown.SetOptions(modeOptions, func(_ string, index int) {
+			if index == 1 {
+				mode = mihomotui.SubscriptionPoolModeMerge
+			} else {
+				mode = mihomotui.SubscriptionPoolModeFailover
+			}
+		}).SetCurrentOption(modeIndex)
 		intervalField := tview.NewInputField().SetLabel("刷新秒数: ").SetText(strconv.Itoa(interval))
 		enabledBox := tview.NewCheckbox().SetLabel("启用此订阅池").SetChecked(enabled)
-		form.AddFormItem(nameField).AddFormItem(intervalField).AddFormItem(enabledBox)
+		form.AddFormItem(nameField).AddFormItem(modeDropdown).AddFormItem(intervalField).AddFormItem(enabledBox)
 		memberList := tview.NewList().ShowSecondaryText(false)
 		memberList.SetBorder(true).SetTitle("成员顺序（上方优先）")
 		var rebuildMembers func()
@@ -176,7 +194,7 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 				showModal("保存失败", "启用的订阅池至少需要一个成员")
 				return
 			}
-			req := poolRequest(mihomotui.SubscriptionPool{}, members, active, strings.TrimSpace(nameField.GetText()), enabledBox.IsChecked(), parsed)
+			req := poolRequest(members, active, strings.TrimSpace(nameField.GetText()), mode, enabledBox.IsChecked(), parsed)
 			go func() {
 				client, err := mihomotui.GetIPCClient()
 				if err == nil {
@@ -204,7 +222,7 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 		})
 		actionBar := tview.NewFlex().SetDirection(tview.FlexColumn).AddItem(nil, 0, 1, false).AddItem(save, 12, 0, true).AddItem(cancel, 12, 0, false)
 		right := tview.NewFlex().SetDirection(tview.FlexRow).
-			AddItem(form, 5, 0, true).
+			AddItem(form, 6, 0, true).
 			AddItem(selector, 1, 0, false).
 			AddItem(memberActions, 1, 0, false).
 			AddItem(memberList, 0, 1, false).
@@ -257,7 +275,19 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 			if reason == "" {
 				reason = "无"
 			}
-			content := fmt.Sprintf("[yellow::b]%s[-:-:-]  %s\n活动源: %s    本地缓存: %s\n成员: %d    刷新间隔: %d 秒\n最近切换: %s\n原因: %s", pool.Name, state, activeName, cache, len(pool.Members), pool.RefreshInterval, pool.LastSwitchAt, reason)
+			modeText := "优先级主备"
+			if pool.Mode == mihomotui.SubscriptionPoolModeMerge {
+				modeText = "合并"
+				activeName = "全部可用成员"
+				available := 0
+				for _, memberID := range pool.Members {
+					if si := cfg.FindSubscriptionByID(memberID); si >= 0 && cfg.Subscriptions[si].CacheFile != "" {
+						available++
+					}
+				}
+				cache = fmt.Sprintf("%d/%d 可用", available, len(pool.Members))
+			}
+			content := fmt.Sprintf("[yellow::b]%s[-:-:-]  %s\n运行模式: %s    活动源: %s    本地缓存: %s\n成员: %d    刷新间隔: %d 秒\n最近切换: %s\n原因: %s", pool.Name, state, modeText, activeName, cache, len(pool.Members), pool.RefreshInterval, pool.LastSwitchAt, reason)
 			info := tview.NewTextView().SetDynamicColors(true).SetWrap(true).SetText(content)
 			p := pool
 			edit := tview.NewButton("编辑").SetSelectedFunc(func() { showEditor(&p) })

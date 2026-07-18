@@ -13,6 +13,21 @@ import (
 const subscriptionFailureThreshold = 3
 const defaultSubscriptionRefreshInterval = 3600
 
+func normalizedSubscriptionPoolMode(mode SubscriptionPoolMode) SubscriptionPoolMode {
+	if mode == "" {
+		// Existing pools predate Mode and retain their original primary/backup semantics.
+		return SubscriptionPoolModeFailover
+	}
+	return mode
+}
+
+func subscriptionPoolModeLabel(mode SubscriptionPoolMode) string {
+	if normalizedSubscriptionPoolMode(mode) == SubscriptionPoolModeMerge {
+		return "合并"
+	}
+	return "优先级主备"
+}
+
 func subscriptionCacheDir() string {
 	dir := filepath.Join(GetSubscriptionsDir(), "cache")
 	_ = os.MkdirAll(dir, 0700)
@@ -101,6 +116,26 @@ func (c *Config) activePoolSubscriptions() ([]SubscriptionMeta, error) {
 		if !pool.Enabled {
 			continue
 		}
+		if normalizedSubscriptionPoolMode(pool.Mode) == SubscriptionPoolModeMerge {
+			available := 0
+			for _, memberID := range pool.Members {
+				i := c.FindSubscriptionByID(memberID)
+				if i < 0 {
+					continue
+				}
+				sub := c.Subscriptions[i]
+				if !hasSubscriptionCache(sub) {
+					continue
+				}
+				result = append(result, sub)
+				available++
+			}
+			if available == 0 {
+				return nil, fmt.Errorf("合并订阅池 %q 没有可用本地缓存", pool.Name)
+			}
+			continue
+		}
+
 		sub, ok := c.activeSubscriptionForPool(pool)
 		if !ok {
 			return nil, fmt.Errorf("订阅池 %q 没有有效活动源", pool.Name)
@@ -115,6 +150,7 @@ func (c *Config) activePoolSubscriptions() ([]SubscriptionMeta, error) {
 	}
 	return result, nil
 }
+
 func timestampNow() string { return time.Now().Format(TimeFormatShort) }
 func normalizedSource(t SubscriptionSource) SubscriptionSource {
 	if t == "" {
