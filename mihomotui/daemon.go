@@ -92,6 +92,7 @@ func (d *Daemon) Run() error {
 
 	// 初始化 mihomo 进程管理器
 	d.mihomoProcess = NewMihomoProcess()
+	MigrateLegacyMihomoBinary()
 	d.startSubscriptionScheduler()
 
 	// 初始化 IPC 授权器，并以最小权限创建 socket 目录。root daemon 只允许
@@ -177,6 +178,9 @@ func (d *Daemon) router() http.Handler {
 	mux.HandleFunc("/api/v1/mihomo/start", d.handleMihomoStart)
 	mux.HandleFunc("/api/v1/mihomo/stop", d.handleMihomoStop)
 	mux.HandleFunc("/api/v1/mihomo/restart", d.handleMihomoRestart)
+	mux.HandleFunc("/api/v1/mihomo/versions", d.handleMihomoVersions)
+	mux.HandleFunc("/api/v1/mihomo/versions/refresh", d.handleMihomoVersionsRefresh)
+	mux.HandleFunc("/api/v1/mihomo/versions/", d.handleMihomoVersionDetail)
 	mux.HandleFunc("/api/v1/mihomo/upgrade", d.handleMihomoUpgrade)
 	mux.HandleFunc("/api/v1/mihomo/upgrade/progress", d.handleMihomoUpgradeProgress)
 	mux.HandleFunc("/api/v1/mihomo/version", d.handleMihomoVersion)
@@ -235,8 +239,9 @@ func (d *Daemon) handleDaemonInfo(w http.ResponseWriter, r *http.Request) {
 		launchMode = "standalone"
 	}
 	info := DaemonInfo{
-		LaunchMode: launchMode,
-		IsRoot:     os.Geteuid() == 0,
+		LaunchMode:      launchMode,
+		IsRoot:          os.Geteuid() == 0,
+		CanManageMihomo: requestIPCRole(r) == ipcRoleAdmin,
 	}
 	writeJSON(w, http.StatusOK, ok(info))
 }

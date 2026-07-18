@@ -2,7 +2,6 @@ package mihomotui
 
 import (
 	"compress/gzip"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,46 +22,21 @@ const (
 	httpTimeout      = 30 * time.Second
 )
 
-// releaseInfo GitHub Release API 响应结构
-type releaseInfo struct {
-	TagName string `json:"tag_name"`
-	Name    string `json:"name"`
-}
-
 // GetMihomoLastVersion 从 GitHub API 获取最新版本号（如 v1.19.0）
 func GetMihomoLastVersion() (string, error) {
-	Infof("请求 GitHub API: %s", githubAPIURL)
-	client := &http.Client{Timeout: httpTimeout}
-	req, err := http.NewRequest("GET", githubAPIURL, nil)
+	// Keep the historical API while delegating to the release catalog. This is
+	// more robust than /releases/latest and validates that an asset exists for
+	// the current platform.
+	versions, _, err := fetchMihomoReleaseCatalog()
 	if err != nil {
-		Errorf("创建请求失败: %v", err)
-		return "", fmt.Errorf("创建请求失败: %w", err)
+		return "", err
 	}
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("User-Agent", "mihomo-tui")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		Errorf("请求 GitHub API 失败: %v", err)
-		return "", fmt.Errorf("请求 GitHub API 失败: %w", err)
+	for _, version := range versions {
+		if !version.Prerelease {
+			return version.Version, nil
+		}
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		Errorf("GitHub API 返回非 200: %d, %s", resp.StatusCode, string(body))
-		return "", fmt.Errorf("GitHub API 返回非 200: %d, %s", resp.StatusCode, string(body))
-	}
-
-	var info releaseInfo
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
-		Errorf("解析 GitHub API 响应失败: %v", err)
-		return "", fmt.Errorf("解析 GitHub API 响应失败: %w", err)
-	}
-
-	version := strings.TrimPrefix(info.TagName, "v")
-	Infof("获取到最新版本: %s", version)
-	return version, nil
+	return "", fmt.Errorf("未找到适用于当前平台的稳定 mihomo 版本")
 }
 
 // GetCurrentMihomoVersion 获取当前安装的 mihomo 版本
@@ -164,119 +138,34 @@ func parseVersion(output string) string {
 	return ""
 }
 
-// DownloadMihomo 下载并安装指定版本的 mihomo
-// onProgress 回调会在下载过程中周期性报告进度（status: downloading/extracting）
-// 下载地址: https://github.com/MetaCubeX/mihomo/releases/download/v{version}/mihomo-{os}-{arch}-v{version}.gz
-func DownloadMihomo(version string, onProgress func(percent int, status string)) (string, error) {
-	configDir := GetConfigDir()
-	if configDir == "" {
-		Errorf("配置目录未设置")
-		return "", fmt.Errorf("配置目录未设置")
-	}
-
-	osName := runtime.GOOS
-	archName := runtime.GOARCH
-
-	// 统一命名
-	switch archName {
-	case "amd64":
-		archName = "amd64"
-	case "arm64":
-		archName = "arm64"
-	}
-
-	fileName := fmt.Sprintf("mihomo-%s-%s-v%s.gz", osName, archName, version)
-	downloadURL := fmt.Sprintf("%s/v%s/%s", githubReleaseURL, version, fileName)
-	Infof("开始下载 mihomo: %s", downloadURL)
-
-	// 下载到唯一临时文件，避免并发升级或遗留文件互相覆盖。
-	tempFile, err := os.CreateTemp("", "mihomo-*.gz")
-	if err != nil {
-		return "", fmt.Errorf("创建临时下载文件失败: %w", err)
-	}
-	tmpFile := tempFile.Name()
-	if err := tempFile.Close(); err != nil {
-		_ = os.Remove(tmpFile)
-		return "", fmt.Errorf("关闭临时下载文件失败: %w", err)
-	}
-	if err := downloadFile(downloadURL, tmpFile, onProgress); err != nil {
-		Errorf("下载失败: %v", err)
-		if onProgress != nil {
-			onProgress(0, "error")
-		}
-		return "", fmt.Errorf("下载失败: %w", err)
-	}
-	defer os.Remove(tmpFile)
-
-	// 解压到 bin/ 子目录
-	if onProgress != nil {
-		onProgress(100, "extracting")
-	}
-	binDir := filepath.Join(configDir, "bin")
-	if err := os.MkdirAll(binDir, 0700); err != nil {
-		return "", fmt.Errorf("创建 bin 目录失败: %w", err)
-	}
-	if err := os.Chmod(binDir, 0700); err != nil {
-		return "", fmt.Errorf("收紧 bin 目录权限失败: %w", err)
-	}
-	installPath := filepath.Join(binDir, mihomoBinaryName)
-	if runtime.GOOS == "windows" {
-		installPath += ".exe"
-	}
-	Infof("解压 mihomo 到临时安装文件: %s", installPath+".tmp")
-	installTmp := installPath + ".tmp"
-	_ = os.Remove(installTmp)
-	if err := extractGzip(tmpFile, installTmp); err != nil {
-		_ = os.Remove(installTmp)
-		Errorf("解压失败: %v", err)
-		if onProgress != nil {
-			onProgress(0, "error")
-		}
-		return "", fmt.Errorf("解压失败: %w", err)
-	}
-
-	// 设置可执行权限并以原子替换方式安装，下载/解压失败不会覆盖已有可用二进制。
-	if runtime.GOOS != "windows" {
-		if err := os.Chmod(installTmp, 0700); err != nil {
-			_ = os.Remove(installTmp)
-			return "", fmt.Errorf("设置可执行权限失败: %w", err)
-		}
-	}
-	if err := os.Rename(installTmp, installPath); err != nil {
-		_ = os.Remove(installTmp)
-		return "", fmt.Errorf("替换 mihomo 二进制失败: %w", err)
-	}
-	Infof("mihomo 安装完成: %s", installPath)
-
-	// 将安装路径写入配置，便于守护进程后续定位（解决分体启动时用户目录隔离问题）；
-	// 通过原子提交持久化，失败时内存与磁盘保持一致。
-	if _, err := UpdateGlobalConfig(func(cfg *Config) error {
-		cfg.MihomoBinaryPath = installPath
-		return nil
-	}); err != nil {
-		Warnf("保存 mihomo 安装路径失败: %v", err)
-	}
-
-	if onProgress != nil {
-		onProgress(100, "done")
-	}
-	return installPath, nil
+// DownloadProgress is reported while a file is transferred. TotalBytes is -1
+// when the server/proxy omits Content-Length.
+type DownloadProgress struct {
+	Percent         int
+	Status          string
+	DownloadedBytes int64
+	TotalBytes      int64
 }
 
-// downloadFile 下载文件到指定路径，onProgress 报告 0-100 的下载进度
+// downloadFile keeps the original lightweight callback API for resource downloads.
 func downloadFile(rawURL, dst string, onProgress func(percent int, status string)) error {
+	return downloadFileWithProgress(rawURL, dst, func(p DownloadProgress) {
+		if onProgress != nil {
+			onProgress(p.Percent, p.Status)
+		}
+	})
+}
+
+func downloadFileWithProgress(rawURL, dst string, onProgress func(DownloadProgress)) error {
 	client := &http.Client{Timeout: httpTimeout}
 	resp, err := client.Get(rawURL)
 	if err != nil {
 		return fmt.Errorf("下载请求失败: %s", RedactURLInText(err.Error()))
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
 	}
-
-	// 始终写入同目录临时文件，成功后再原子替换目标文件，避免失败下载破坏现有资源。
 	tmpPath := dst + ".tmp"
 	_ = os.Remove(tmpPath)
 	out, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
@@ -290,36 +179,42 @@ func downloadFile(rawURL, dst string, onProgress func(percent int, status string
 			_ = os.Remove(tmpPath)
 		}
 	}()
-
 	totalSize := resp.ContentLength
-	if onProgress == nil || totalSize <= 0 {
-		if _, err := io.Copy(out, resp.Body); err != nil {
-			return err
-		}
-	} else {
-		var downloaded int64
-		buf := make([]byte, DownloadBufferSize)
-		lastPercent := -1
-		for {
-			n, readErr := resp.Body.Read(buf)
-			if n > 0 {
-				if _, err := out.Write(buf[:n]); err != nil {
-					return err
-				}
-				downloaded += int64(n)
-				percent := int(float64(downloaded) * 100 / float64(totalSize))
-				if percent != lastPercent {
-					lastPercent = percent
-					onProgress(percent, "downloading")
+	var downloaded int64
+	lastPercent := -2
+	lastBytes := int64(-1)
+	buf := make([]byte, DownloadBufferSize)
+	for {
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			if _, err := out.Write(buf[:n]); err != nil {
+				return err
+			}
+			downloaded += int64(n)
+			percent := 0
+			if totalSize > 0 {
+				percent = int(downloaded * 100 / totalSize)
+				if percent > 100 {
+					percent = 100
 				}
 			}
-			if readErr == io.EOF {
-				break
-			}
-			if readErr != nil {
-				return readErr
+			// Known-length transfers report on each percent. Unknown-length
+			// transfers report byte progress at least every 256 KiB.
+			if onProgress != nil && ((totalSize > 0 && percent != lastPercent) || (totalSize <= 0 && downloaded-lastBytes >= 256<<10)) {
+				onProgress(DownloadProgress{Percent: percent, Status: "downloading", DownloadedBytes: downloaded, TotalBytes: totalSize})
+				lastPercent = percent
+				lastBytes = downloaded
 			}
 		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return readErr
+		}
+	}
+	if onProgress != nil && totalSize <= 0 && downloaded != lastBytes {
+		onProgress(DownloadProgress{Percent: 0, Status: "downloading", DownloadedBytes: downloaded, TotalBytes: totalSize})
 	}
 	if err := out.Sync(); err != nil {
 		return err

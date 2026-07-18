@@ -112,12 +112,18 @@ type RuleProviderSubscription struct {
 type Config struct {
 	// Version 配置版本号，每次成功提交（校验 + 落盘 + 替换内存）递增。
 	// 客户端基于读取到的版本提交整份配置，daemon 借此检测陈旧客户端的并发覆盖。
-	Version          int64              `yaml:"version" json:"version"`
-	MihomoConfigPath string             `yaml:"mihomo_config_path"`
-	MihomoBinaryPath string             `yaml:"mihomo_binary_path"`
-	System           SystemConfig       `yaml:"system"`
-	Mihomo           MihomoConfig       `yaml:"mihomo"`
-	Subscriptions    []SubscriptionMeta `yaml:"subscriptions"`
+	Version          int64  `yaml:"version" json:"version"`
+	MihomoConfigPath string `yaml:"mihomo_config_path"`
+	MihomoBinaryPath string `yaml:"mihomo_binary_path"`
+	// MihomoActiveVersion 标识 mihomo-tui 私有版本仓库中当前启用的内核。
+	MihomoActiveVersion     string              `yaml:"mihomo_active_version,omitempty"`
+	MihomoVersions          []MihomoVersionInfo `yaml:"mihomo_versions,omitempty"`
+	MihomoVersionsCheckedAt string              `yaml:"mihomo_versions_checked_at,omitempty"`
+	MihomoVersionsSource    string              `yaml:"mihomo_versions_source,omitempty"`
+	MihomoVersionsLastError string              `yaml:"mihomo_versions_last_error,omitempty"`
+	System                  SystemConfig        `yaml:"system"`
+	Mihomo                  MihomoConfig        `yaml:"mihomo"`
+	Subscriptions           []SubscriptionMeta  `yaml:"subscriptions"`
 	// SubscriptionPools owns active sources. ActiveSubscription remains for legacy compatibility.
 	SubscriptionPools         []SubscriptionPool         `yaml:"subscription_pools,omitempty"`
 	ActiveSubscription        int                        `yaml:"active_subscription"`

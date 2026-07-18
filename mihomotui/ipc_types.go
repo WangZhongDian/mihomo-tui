@@ -24,6 +24,13 @@ type ConfigUpdateResponse struct {
 }
 
 // SubscriptionImportRequest 导入订阅请求
+// SubscriptionUpdateRequest 修改订阅显示名称、远程地址和本地代理拉取策略。
+type SubscriptionUpdateRequest struct {
+	Name          string `json:"name"`
+	URL           string `json:"url,omitempty"`
+	UseLocalProxy bool   `json:"use_local_proxy,omitempty"`
+}
+
 type SubscriptionImportRequest struct {
 	Name          string             `json:"name,omitempty"`
 	URL           string             `json:"url,omitempty"`
@@ -67,15 +74,19 @@ type ProxyDelayResponse struct {
 
 // DaemonInfo 守护进程信息
 type DaemonInfo struct {
-	LaunchMode string `json:"launch_mode"` // embedded 或 standalone
-	IsRoot     bool   `json:"is_root"`
+	LaunchMode      string `json:"launch_mode"` // embedded 或 standalone
+	IsRoot          bool   `json:"is_root"`
+	CanManageMihomo bool   `json:"can_manage_mihomo"` // 当前 IPC 调用方是否可修改内核版本
 }
 
 // UpgradeProgress mihomo 内核升级进度
 type UpgradeProgress struct {
-	Status  string `json:"status"`  // idle / downloading / extracting / done / error
-	Percent int    `json:"percent"` // 0-100
-	Message string `json:"message"` // 状态描述
+	Status          string `json:"status"`                     // idle / downloading / extracting / done / error
+	Percent         int    `json:"percent"`                    // 0-100
+	Message         string `json:"message"`                    // 状态描述
+	Version         string `json:"version,omitempty"`          // 当前下载的版本
+	DownloadedBytes int64  `json:"downloaded_bytes,omitempty"` // 已下载字节数
+	TotalBytes      int64  `json:"total_bytes,omitempty"`      // 总字节数；-1 表示服务端未提供
 }
 
 // RuleProviderImportRequest 导入规则订阅请求
@@ -86,4 +97,12 @@ type RuleProviderImportRequest struct {
 	Format     string `json:"format"`
 	Interval   int    `json:"interval"`
 	ProxyGroup string `json:"proxy_group"`
+}
+
+// MihomoVersionsResponse is the cached release catalog plus its refresh metadata.
+type MihomoVersionsResponse struct {
+	Versions  []MihomoVersionInfo `json:"versions"`
+	CheckedAt string              `json:"checked_at,omitempty"`
+	Source    string              `json:"source,omitempty"`
+	LastError string              `json:"last_error,omitempty"`
 }

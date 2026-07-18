@@ -6,6 +6,40 @@ import (
 	"strings"
 )
 
+// assignPoolMembers 将成员独占地归入目标池；从其他池移除后，空池会自动禁用并保留。
+// 订阅池的成员关系是“移动”而不是“复制”，避免创建新池时触发重复归属校验。
+func assignPoolMembers(cfg *Config, target int, members []string) {
+	wanted := make(map[string]bool, len(members))
+	for _, id := range members {
+		wanted[id] = true
+	}
+	for i := range cfg.SubscriptionPools {
+		if i == target {
+			continue
+		}
+		pool := &cfg.SubscriptionPools[i]
+		kept := pool.Members[:0]
+		for _, id := range pool.Members {
+			if !wanted[id] {
+				kept = append(kept, id)
+			}
+		}
+		pool.Members = kept
+		if !wanted[pool.ActiveMemberID] {
+			continue
+		}
+		if len(pool.Members) > 0 {
+			pool.ActiveMemberID = pool.Members[0]
+		} else {
+			pool.ActiveMemberID = ""
+			pool.Enabled = false
+			pool.Degraded = true
+			pool.LastSwitchAt = timestampNow()
+			pool.LastSwitchReason = "成员已移入其他订阅池"
+		}
+	}
+}
+
 func (d *Daemon) handleSubscriptionPools(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -35,6 +69,7 @@ func (d *Daemon) handleSubscriptionPools(w http.ResponseWriter, r *http.Request)
 				interval = defaultSubscriptionRefreshInterval
 			}
 			cfg.SubscriptionPools = append(cfg.SubscriptionPools, SubscriptionPool{ID: id, Name: req.Name, Members: req.Members, ActiveMemberID: active, Enabled: req.Enabled, RefreshInterval: interval})
+			assignPoolMembers(cfg, len(cfg.SubscriptionPools)-1, req.Members)
 			return nil
 		})
 		if err != nil {
@@ -83,6 +118,7 @@ func (d *Daemon) handleSubscriptionPoolDetail(w http.ResponseWriter, r *http.Req
 			if p.ActiveMemberID == "" && len(p.Members) > 0 {
 				p.ActiveMemberID = p.Members[0]
 			}
+			assignPoolMembers(cfg, i, p.Members)
 			return nil
 		})
 		if err != nil {

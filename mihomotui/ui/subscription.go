@@ -24,6 +24,7 @@ type Subscription struct {
 	FailureCount  int
 	CacheFile     string
 	SourceType    mihomotui.SubscriptionSource
+	UseLocalProxy bool
 }
 
 // NewSubscriptionPage 创建订阅页面
@@ -48,6 +49,7 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 				FailureCount:  meta.FailureCount,
 				CacheFile:     meta.CacheFile,
 				SourceType:    meta.SourceType,
+				UseLocalProxy: meta.UseLocalProxy,
 			})
 		}
 	}
@@ -139,6 +141,7 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 	// 先声明闭包变量，避免循环引用
 	refreshSub := func(idx int) {}
 	deleteSub := func(idx int) {}
+	editSub := func(idx int) {}
 	refreshCards := func() {}
 
 	// 刷新指定订阅：由 daemon 实际请求远端订阅、更新元数据，并在激活时应用新配置。
@@ -217,6 +220,82 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 				refreshCards()
 			})
 		}()
+	}
+
+	// editSub 修改订阅显示名称；远程订阅还可修改 URL 与本地代理拉取开关。
+	editSub = func(idx int) {
+		if idx < 0 || idx >= len(subscriptions) {
+			return
+		}
+		sub := subscriptions[idx]
+		pages.RemovePage("subscription-editor")
+		form := tview.NewForm().SetButtonsAlign(tview.AlignRight)
+		nameField := tview.NewInputField().SetLabel("名称: ").SetText(sub.Name)
+		urlField := tview.NewInputField().SetLabel("订阅链接: ").SetText(sub.URL)
+		viaProxy := tview.NewCheckbox().SetLabel("通过本地 mihomo 代理拉取").SetChecked(sub.UseLocalProxy)
+		// 对文件/粘贴导入，正文不可从 IPC 读回；只允许改名称，避免误以为能编辑缓存正文。
+		isRemote := sub.SourceType == "" || sub.SourceType == mihomotui.SubscriptionSourceURL
+		if !isRemote {
+			urlField.SetDisabled(true)
+			viaProxy.SetDisabled(true)
+		}
+		form.AddFormItem(nameField).AddFormItem(urlField).AddFormItem(viaProxy)
+		close := func() { pages.RemovePage("subscription-editor"); app.SetFocus(pages); app.SetFocus(inputField) }
+		save := tview.NewButton(" 保存 ")
+		cancel := tview.NewButton(" 取消 ").SetSelectedFunc(close)
+		save.SetSelectedFunc(func() {
+			name, rawURL := strings.TrimSpace(nameField.GetText()), strings.TrimSpace(urlField.GetText())
+			if name == "" {
+				showModal("保存失败", "订阅名称不能为空")
+				return
+			}
+			if isRemote && (!strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://")) {
+				showModal("保存失败", "远程订阅链接必须以 http:// 或 https:// 开头")
+				return
+			}
+			go func() {
+				client, err := mihomotui.GetIPCClient()
+				if err == nil {
+					err = client.IPCUpdateSubscription(sub.ID, mihomotui.SubscriptionUpdateRequest{Name: name, URL: rawURL, UseLocalProxy: viaProxy.IsChecked()})
+				}
+				if err != nil {
+					app.QueueUpdateDraw(func() { showModal("保存失败", err.Error()); app.SetFocus(nameField) })
+					return
+				}
+				fresh, err := client.IPCGetConfig()
+				app.QueueUpdateDraw(func() {
+					if err != nil {
+						showModal("保存成功，但同步失败", err.Error())
+						return
+					}
+					cfg = fresh
+					mihomotui.SyncConfigFromServer(fresh)
+					mihomotui.ResetMihomoAPI()
+					reloadSubs()
+					refreshCards()
+					close()
+					showModal("保存成功", "订阅信息已更新；修改远程链接后请点击刷新以下载新内容")
+				})
+			}()
+		})
+		actions := tview.NewFlex().AddItem(nil, 0, 1, false).AddItem(save, 12, 0, true).AddItem(cancel, 12, 0, false)
+		body := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(form, 6, 0, true).AddItem(tview.NewTextView().SetText(func() string {
+			if isRemote {
+				return "修改链接后需手动刷新，旧缓存会继续保留。"
+			}
+			return "此订阅来自本地文件或粘贴内容；为保护缓存正文，仅支持修改名称。"
+		}()), 2, 0, false).AddItem(actions, 1, 0, false)
+		body.SetBorder(true).SetTitle("编辑订阅（Esc 取消）")
+		body.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+			if event.Key() == tcell.KeyEscape {
+				close()
+				return nil
+			}
+			return event
+		})
+		pages.AddPage("subscription-editor", body, true, true)
+		app.SetFocus(pages)
+		app.SetFocus(nameField)
 	}
 
 	// 刷新卡片列表
@@ -303,6 +382,11 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 				}()
 			})
 
+			// 编辑按钮
+			editBtn := tview.NewButton(" ✎ ")
+			editBtn.SetBorder(false)
+			editBtn.SetSelectedFunc(func() { editSub(idx) })
+
 			// 刷新按钮
 			refreshBtn := tview.NewButton(" ↻ ")
 			refreshBtn.SetBorder(false)
@@ -317,9 +401,10 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 				deleteSub(idx)
 			})
 
-			// 按钮区：应用 + 刷新 + 删除，垂直排列
+			// 按钮区：应用 + 编辑 + 刷新 + 删除
 			btnFlex := tview.NewFlex().SetDirection(tview.FlexRow).
 				AddItem(applyBtn, 1, 0, true).
+				AddItem(editBtn, 1, 0, true).
 				AddItem(refreshBtn, 1, 0, true).
 				AddItem(deleteBtn, 1, 0, true)
 

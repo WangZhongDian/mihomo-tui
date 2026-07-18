@@ -4,15 +4,68 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"text/template"
 
 	"mihomotui/mihomotui"
 )
+
+// installBinaryAtomically replaces target without truncating its current inode.
+// This makes repeated installs safe even when a recently stopped systemd process
+// still has the previous executable mapped in memory.
+func installBinaryAtomically(source, target string) error {
+	in, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(target), ".mihomo-tui-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	completed := false
+	defer func() {
+		if !completed {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if _, err := io.Copy(tmp, in); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0755); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, target); err != nil {
+		return err
+	}
+	completed = true
+	// Best-effort directory sync makes the rename durable; unsupported filesystems
+	// should not turn an otherwise successful install into a failure.
+	if dir, err := os.Open(filepath.Dir(target)); err == nil {
+		_ = dir.Sync()
+		_ = dir.Close()
+	}
+	return nil
+}
 
 // InstallService 将当前程序安装为 systemd 系统服务
 // 需要 root 权限执行
@@ -58,14 +111,13 @@ func InstallService() error {
 
 	// 如果当前路径不是目标路径，则复制
 	if execPath != targetPath {
-		data, err := os.ReadFile(execPath)
-		if err != nil {
-			return fmt.Errorf("读取可执行文件失败: %w", err)
-		}
-		if err := os.WriteFile(targetPath, data, 0755); err != nil {
+		// 不能直接 O_TRUNC 覆盖目标文件：旧 daemon 即使尚未完全退出，
+		// Linux 也会返回 ETXTBSY（text file busy）。同目录临时文件 + rename
+		// 是原子替换，允许正在执行旧 inode 的进程自然退出。
+		if err := installBinaryAtomically(execPath, targetPath); err != nil {
 			return fmt.Errorf("复制可执行文件到 %s 失败: %w", targetPath, err)
 		}
-		mihomotui.Infof("已复制可执行文件到 %s", targetPath)
+		mihomotui.Infof("已原子替换可执行文件: %s", targetPath)
 	}
 
 	// 6. 以 root 用户运行服务

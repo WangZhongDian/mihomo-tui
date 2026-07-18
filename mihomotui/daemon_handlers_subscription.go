@@ -276,6 +276,49 @@ func (d *Daemon) handleSubscriptionDetail(w http.ResponseWriter, r *http.Request
 	}
 
 	switch r.Method {
+	case http.MethodPatch:
+		if action != "" {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("未知操作: %s", action))
+			return
+		}
+		var req SubscriptionUpdateRequest
+		if err := readJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("解析请求失败: %w", err))
+			return
+		}
+		var updated SubscriptionMeta
+		_, err := UpdateGlobalConfig(func(cfg *Config) error {
+			idx := cfg.FindSubscriptionByIdentifier(name)
+			if idx < 0 {
+				return fmt.Errorf("订阅不存在: %s", name)
+			}
+			item := &cfg.Subscriptions[idx]
+			newName := strings.TrimSpace(req.Name)
+			if newName == "" {
+				return fmt.Errorf("订阅名称不能为空")
+			}
+			if other := cfg.FindSubscriptionByName(newName); other >= 0 && other != idx {
+				return fmt.Errorf("订阅名称已存在: %s", newName)
+			}
+			if normalizedSource(item.SourceType) == SubscriptionSourceURL {
+				if _, err := validateSubscriptionURL(req.URL); err != nil {
+					return err
+				}
+				item.URL = strings.TrimSpace(req.URL)
+				item.UseLocalProxy = req.UseLocalProxy
+			} else if strings.TrimSpace(req.URL) != "" {
+				return fmt.Errorf("本地文件或粘贴订阅不能修改为远程链接，请重新导入")
+			}
+			item.Name = newName
+			item.UpdatedAt = timestampNow()
+			updated = *item
+			return nil
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("保存订阅修改失败: %w", err))
+			return
+		}
+		writeJSON(w, http.StatusOK, ok(updated))
 	case http.MethodPut:
 		if action != "" {
 			writeError(w, http.StatusBadRequest, fmt.Errorf("未知操作: %s", action))

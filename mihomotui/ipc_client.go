@@ -328,6 +328,16 @@ func (c *IPCClient) IPCImportSubscriptionWithRequest(req SubscriptionImportReque
 	return err
 }
 
+// IPCUpdateSubscription 更新订阅元数据；本地内容仍保留原缓存，远程 URL 的正文将在下一次刷新时更新。
+func (c *IPCClient) IPCUpdateSubscription(id string, req SubscriptionUpdateRequest) error {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+	_, err = c.requestJSON(http.MethodPatch, "/api/v1/subscriptions/"+url.PathEscape(id), body, nil)
+	return err
+}
+
 // IPCRefreshSubscription 刷新订阅
 func (c *IPCClient) IPCRefreshSubscription(name string) error {
 	_, err := c.requestJSON(http.MethodPut, "/api/v1/subscriptions/"+url.PathEscape(name), nil, nil)
@@ -592,5 +602,37 @@ func (c *IPCClient) IPCDeleteSubscriptionPool(id string) error {
 // IPCRefreshSubscriptionPool 立即刷新订阅池全部远程成员。
 func (c *IPCClient) IPCRefreshSubscriptionPool(id string) error {
 	_, err := c.requestJSON(http.MethodPost, "/api/v1/subscription-pools/"+url.PathEscape(id)+"/refresh", nil, nil)
+	return err
+}
+
+// IPCGetMihomoVersions returns cached releases and local download state.
+func (c *IPCClient) IPCGetMihomoVersions() (*MihomoVersionsResponse, error) {
+	resp, err := c.requestJSON(http.MethodGet, "/api/v1/mihomo/versions", nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	result, err := unmarshalData[MihomoVersionsResponse](resp)
+	if err != nil {
+		return nil, fmt.Errorf("解析内核版本列表失败: %w", err)
+	}
+	return &result, nil
+}
+func (c *IPCClient) IPCRefreshMihomoVersions() ([]MihomoVersionInfo, error) {
+	resp, err := c.requestJSON(http.MethodPost, "/api/v1/mihomo/versions/refresh", nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return unmarshalData[[]MihomoVersionInfo](resp)
+}
+func (c *IPCClient) IPCDownloadMihomoVersion(version string) error {
+	_, err := c.requestJSON(http.MethodPost, "/api/v1/mihomo/versions/"+url.PathEscape(version), nil, map[string]string{"action": "download"})
+	return err
+}
+func (c *IPCClient) IPCActivateMihomoVersion(version string) error {
+	_, err := c.requestJSON(http.MethodPost, "/api/v1/mihomo/versions/"+url.PathEscape(version), nil, map[string]string{"action": "activate"})
+	return err
+}
+func (c *IPCClient) IPCDeleteMihomoVersion(version string) error {
+	_, err := c.requestJSON(http.MethodDelete, "/api/v1/mihomo/versions/"+url.PathEscape(version), nil, nil)
 	return err
 }

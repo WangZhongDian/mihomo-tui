@@ -200,7 +200,7 @@ func isIPCReadOnlyRequest(r *http.Request) bool {
 	// 只读组只可查看不含订阅 URL、配置路径或凭据的运行状态。
 	// 配置、订阅列表、规则订阅和 API 凭据都必须由 operator/root 身份访问。
 	switch path.Clean(r.URL.Path) {
-	case "/api/v1/ping", "/api/v1/daemon/info", "/api/v1/mihomo/status", "/api/v1/mihomo/version", "/api/v1/mihomo/latest-version", "/api/v1/mihomo/upgrade/progress":
+	case "/api/v1/ping", "/api/v1/daemon/info", "/api/v1/mihomo/status", "/api/v1/mihomo/version", "/api/v1/mihomo/latest-version", "/api/v1/mihomo/upgrade/progress", "/api/v1/mihomo/versions":
 		return true
 	default:
 		return false
@@ -214,8 +214,15 @@ func isIPCRootOnlyRequest(r *http.Request) bool {
 	}
 	if strings.HasPrefix(cleanPath, "/api/v1/mihomo/start") ||
 		strings.HasPrefix(cleanPath, "/api/v1/mihomo/stop") ||
-		strings.HasPrefix(cleanPath, "/api/v1/mihomo/restart") ||
-		strings.HasPrefix(cleanPath, "/api/v1/mihomo/upgrade") {
+		strings.HasPrefix(cleanPath, "/api/v1/mihomo/restart") {
+		return true
+	}
+	// 内核二进制会写入 root 管理的私有目录，下载、切换、删除及刷新
+	// Release 缓存统一只允许 root 调用方执行。进度/列表查询保持只读。
+	if strings.HasPrefix(cleanPath, "/api/v1/mihomo/versions") && r.Method != http.MethodGet {
+		return true
+	}
+	if cleanPath == "/api/v1/mihomo/upgrade" && r.Method != http.MethodGet {
 		return true
 	}
 	return cleanPath == "/api/v1/daemon/shutdown" || cleanPath == "/api/v1/mihomo/external-resources/download"

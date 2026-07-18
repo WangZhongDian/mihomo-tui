@@ -14,6 +14,7 @@ var ErrConfigConflict = errors.New("配置版本冲突")
 func (c *Config) Clone() Config {
 	cp := *c
 	cp.Subscriptions = append([]SubscriptionMeta(nil), c.Subscriptions...)
+	cp.MihomoVersions = append([]MihomoVersionInfo(nil), c.MihomoVersions...)
 	cp.SubscriptionPools = append([]SubscriptionPool(nil), c.SubscriptionPools...)
 	for i := range cp.SubscriptionPools {
 		cp.SubscriptionPools[i].Members = append([]string(nil), c.SubscriptionPools[i].Members...)

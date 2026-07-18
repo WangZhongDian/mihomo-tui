@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"mihomotui/mihomotui"
 )
@@ -14,6 +15,7 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 	pages := tview.NewPages()
 	pages.Focus(func(p tview.Primitive) { app.SetFocus(p) })
 	list := tview.NewFlex().SetDirection(tview.FlexRow)
+	list.SetBorder(true).SetTitle("订阅池列表")
 	status := tview.NewTextView().SetDynamicColors(true)
 	add := tview.NewButton(" 新建订阅池 ")
 	refresh := tview.NewButton(" 刷新列表 ")
@@ -24,7 +26,7 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 	var cfg *mihomotui.Config
 	var render func()
 	showModal := func(title, text string) {
-		modal := tview.NewModal().SetText(title + "\n\n" + text).AddButtons([]string{"确认"}).SetDoneFunc(func(int, string) { pages.RemovePage("modal"); app.SetFocus(base) })
+		modal := tview.NewModal().SetText(title + "\n\n" + text).AddButtons([]string{"确认"}).SetDoneFunc(func(int, string) { pages.RemovePage("modal"); app.SetFocus(pages); app.SetFocus(add) })
 		pages.RemovePage("modal")
 		pages.AddPage("modal", modal, true, true)
 		app.SetFocus(modal)
@@ -37,6 +39,14 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 				return
 			}
 			fresh, err := client.IPCGetConfig()
+			if err == nil {
+				pools, poolErr := client.IPCGetSubscriptionPools()
+				if poolErr != nil {
+					err = poolErr
+				} else {
+					fresh.SubscriptionPools = pools
+				}
+			}
 			app.QueueUpdateDraw(func() {
 				if err == nil {
 					cfg = fresh
@@ -66,7 +76,7 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 			members = append(members, existing.Members...)
 			active = existing.ActiveMemberID
 		}
-		form := tview.NewForm()
+		form := tview.NewForm().SetButtonsAlign(tview.AlignRight)
 		nameField := tview.NewInputField().SetLabel("名称: ").SetText(name)
 		intervalField := tview.NewInputField().SetLabel("刷新秒数: ").SetText(strconv.Itoa(interval))
 		enabledBox := tview.NewCheckbox().SetLabel("启用此订阅池").SetChecked(enabled)
@@ -152,10 +162,11 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 				rebuildMembers()
 			}
 		})
-		buttons := tview.NewFlex().AddItem(addMember, 8, 0, false).AddItem(up, 8, 0, false).AddItem(down, 8, 0, false).AddItem(activate, 12, 0, false).AddItem(remove, 8, 0, false)
-		right := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(form, 8, 0, true).AddItem(selector, 1, 0, false).AddItem(buttons, 1, 0, false).AddItem(memberList, 0, 1, false)
-		close := func() { pages.RemovePage("pool-editor"); app.SetFocus(base) }
-		form.AddButton("保存", func() {
+		memberActions := tview.NewFlex().AddItem(addMember, 8, 0, false).AddItem(up, 8, 0, false).AddItem(down, 8, 0, false).AddItem(activate, 12, 0, false).AddItem(remove, 8, 0, false)
+		close := func() { pages.RemovePage("pool-editor"); app.SetFocus(pages); app.SetFocus(add) }
+		save := tview.NewButton(" 保存 ")
+		cancel := tview.NewButton(" 取消 ").SetSelectedFunc(close)
+		save.SetSelectedFunc(func() {
 			parsed, err := strconv.Atoi(strings.TrimSpace(intervalField.GetText()))
 			if err != nil || parsed <= 0 {
 				showModal("保存失败", "刷新间隔必须是正整数秒")
@@ -191,40 +202,63 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 				})
 			}()
 		})
-		form.AddButton("取消", close)
-		editor := tview.NewFlex().AddItem(right, 0, 1, true).SetBorder(true).SetTitle("订阅池编辑")
+		actionBar := tview.NewFlex().SetDirection(tview.FlexColumn).AddItem(nil, 0, 1, false).AddItem(save, 12, 0, true).AddItem(cancel, 12, 0, false)
+		right := tview.NewFlex().SetDirection(tview.FlexRow).
+			AddItem(form, 5, 0, true).
+			AddItem(selector, 1, 0, false).
+			AddItem(memberActions, 1, 0, false).
+			AddItem(memberList, 0, 1, false).
+			AddItem(actionBar, 1, 0, false)
+		editor := tview.NewFlex().AddItem(right, 0, 1, true)
+		editor.SetBorder(true).SetTitle("订阅池编辑（Tab 切换控件，Esc 返回列表）")
+		editor.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+			if event.Key() == tcell.KeyEscape {
+				close()
+				return nil
+			}
+			return event
+		})
 		pages.RemovePage("pool-editor")
 		pages.AddPage("pool-editor", editor, true, true)
+		// Pages 是应用当前焦点链中的节点；先聚焦 Pages，才能让它把焦点委派给最上层 editor。
+		// 再聚焦具体控件，避免弹窗只渲染边框却无法接收键盘/鼠标事件。
+		app.SetFocus(pages)
 		app.SetFocus(nameField)
 	}
 
 	render = func() {
 		list.Clear()
 		if cfg == nil || len(cfg.SubscriptionPools) == 0 {
-			list.AddItem(tview.NewTextView().SetText("\n暂无订阅池。请新建池并添加订阅源。"), 0, 1, false)
+			empty := tview.NewTextView().SetTextAlign(tview.AlignCenter).SetText("\n暂无订阅池。\n\n请点击上方“新建订阅池”创建主备集合。")
+			list.AddItem(empty, 0, 1, false)
 			return
 		}
 		for i := range cfg.SubscriptionPools {
 			pool := cfg.SubscriptionPools[i]
-			activeName := "无"
-			cache, statusText := "无", "[yellow]已禁用[-]"
+			activeName, cache := "无", "无"
+			state := "[yellow]已禁用[-]"
 			if si := cfg.FindSubscriptionByID(pool.ActiveMemberID); si >= 0 {
-				s := cfg.Subscriptions[si]
-				activeName = s.Name
-				if s.CacheFile != "" {
+				sub := cfg.Subscriptions[si]
+				activeName = sub.Name
+				if sub.CacheFile != "" {
 					cache = "可用"
 				} else {
 					cache = "缺失"
 				}
-				statusText = "[green]正常[-]"
-				if s.FailureCount > 0 {
-					statusText = fmt.Sprintf("[yellow]连续失败 %d[-]", s.FailureCount)
+				state = "[green]正常[-]"
+				if sub.FailureCount > 0 {
+					state = fmt.Sprintf("[yellow]连续失败 %d[-]", sub.FailureCount)
 				}
 			}
 			if pool.Degraded {
-				statusText = "[red]已降级[-]"
+				state = "[red]已降级[-]"
 			}
-			info := tview.NewTextView().SetDynamicColors(true).SetText(fmt.Sprintf("[yellow::b]%s[-:-:-]  %s\n活动源: %s  缓存: %s  成员: %d  间隔: %ds\n%s  切换: %s %s", pool.Name, statusText, activeName, cache, len(pool.Members), pool.RefreshInterval, strings.TrimSpace(pool.LastSwitchReason), pool.LastSwitchAt, ""))
+			reason := strings.TrimSpace(pool.LastSwitchReason)
+			if reason == "" {
+				reason = "无"
+			}
+			content := fmt.Sprintf("[yellow::b]%s[-:-:-]  %s\n活动源: %s    本地缓存: %s\n成员: %d    刷新间隔: %d 秒\n最近切换: %s\n原因: %s", pool.Name, state, activeName, cache, len(pool.Members), pool.RefreshInterval, pool.LastSwitchAt, reason)
+			info := tview.NewTextView().SetDynamicColors(true).SetWrap(true).SetText(content)
 			p := pool
 			edit := tview.NewButton("编辑").SetSelectedFunc(func() { showEditor(&p) })
 			flush := tview.NewButton("刷新").SetSelectedFunc(func() {
@@ -269,9 +303,10 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 					})
 				}()
 			})
-			buttons := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(edit, 1, 0, true).AddItem(flush, 1, 0, false).AddItem(deleteBtn, 1, 0, false)
-			card := tview.NewFlex().AddItem(info, 0, 1, false).AddItem(buttons, 8, 0, true).SetBorder(true)
-			list.AddItem(card, 6, 0, false)
+			buttonRow := tview.NewFlex().SetDirection(tview.FlexColumn).AddItem(edit, 8, 0, true).AddItem(flush, 8, 0, false).AddItem(deleteBtn, 8, 0, false)
+			card := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(info, 0, 1, false).AddItem(buttonRow, 1, 0, true)
+			card.SetBorder(true)
+			list.AddItem(card, 8, 0, false)
 		}
 	}
 	add.SetSelectedFunc(func() { showEditor(nil) })
