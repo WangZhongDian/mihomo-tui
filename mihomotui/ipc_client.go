@@ -368,13 +368,38 @@ func (c *IPCClient) IPCGetMihomoStatus() (*MihomoStatusResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("解析状态响应失败: %w", err)
 	}
+	// TUI 直接调用 mihomo REST API；状态查询同时同步 daemon 记录的实际
+	// 运行版本，确保长时间打开的客户端在服务端重启/换核后不会使用旧快照。
+	if result.Running && result.RunningVersion != "" {
+		local := GlobalConfig()
+		if local.MihomoRunningVersion != result.RunningVersion || local.MihomoRunningVersionAt != result.VersionAt {
+			local.MihomoRunningVersion = result.RunningVersion
+			local.MihomoRunningVersionAt = result.VersionAt
+			SetGlobalConfig(*local)
+		}
+	}
 	return &result, nil
+}
+
+// syncRuntimeConfig refreshes state changed by daemon-side runtime operations.
+// 守护进程启动/切换内核后会记录实际运行版本；TUI 直接请求 mihomo API，
+// 所以必须立刻同步该记录，不能继续使用启动前的本地配置快照。
+func (c *IPCClient) syncRuntimeConfig() {
+	cfg, err := c.IPCGetConfig()
+	if err != nil {
+		Warnf("运行时操作后同步服务端配置失败: %v", err)
+		return
+	}
+	SyncConfigFromServer(cfg)
 }
 
 // IPCStartMihomo 启动 mihomo
 func (c *IPCClient) IPCStartMihomo() error {
-	_, err := c.requestJSON(http.MethodPost, "/api/v1/mihomo/start", nil, nil)
-	return err
+	if _, err := c.requestJSON(http.MethodPost, "/api/v1/mihomo/start", nil, nil); err != nil {
+		return err
+	}
+	c.syncRuntimeConfig()
+	return nil
 }
 
 // IPCStopMihomo 停止 mihomo
@@ -385,8 +410,11 @@ func (c *IPCClient) IPCStopMihomo() error {
 
 // IPCRestartMihomo 重启 mihomo
 func (c *IPCClient) IPCRestartMihomo() error {
-	_, err := c.requestJSON(http.MethodPost, "/api/v1/mihomo/restart", nil, nil)
-	return err
+	if _, err := c.requestJSON(http.MethodPost, "/api/v1/mihomo/restart", nil, nil); err != nil {
+		return err
+	}
+	c.syncRuntimeConfig()
+	return nil
 }
 
 // IPCUpgradeMihomo 更新 mihomo（传入空字符串则自动获取最新版本）
@@ -629,8 +657,12 @@ func (c *IPCClient) IPCDownloadMihomoVersion(version string) error {
 	return err
 }
 func (c *IPCClient) IPCActivateMihomoVersion(version string) error {
-	_, err := c.requestJSON(http.MethodPost, "/api/v1/mihomo/versions/"+url.PathEscape(version), nil, map[string]string{"action": "activate"})
-	return err
+	if _, err := c.requestJSON(http.MethodPost, "/api/v1/mihomo/versions/"+url.PathEscape(version), nil, map[string]string{"action": "activate"}); err != nil {
+		return err
+	}
+	// 激活运行中内核会触发受控重启；同步其实际运行版本供 API 兼容层使用。
+	c.syncRuntimeConfig()
+	return nil
 }
 func (c *IPCClient) IPCDeleteMihomoVersion(version string) error {
 	_, err := c.requestJSON(http.MethodDelete, "/api/v1/mihomo/versions/"+url.PathEscape(version), nil, nil)

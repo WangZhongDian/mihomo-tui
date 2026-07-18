@@ -61,6 +61,16 @@ type mihomoProxiesResponse struct {
 	Proxies map[string]mihomoProxy `json:"proxies"`
 }
 
+// mihomoProxyProvider 是 /providers/proxies 返回的单个 provider。
+// mihomo v1.19.28 起，provider 内的节点不再包含在 /proxies 响应中。
+type mihomoProxyProvider struct {
+	Proxies []mihomoProxy `json:"proxies"`
+}
+
+type mihomoProxyProvidersResponse struct {
+	Providers map[string]mihomoProxyProvider `json:"providers"`
+}
+
 type mihomoGroupDelayResponse map[string]int
 
 type mihomoConnectionsResponse struct {

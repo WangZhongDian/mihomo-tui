@@ -98,6 +98,11 @@ func (p *MihomoProcess) Start() error {
 		p.mu.Unlock()
 		return fmt.Errorf("未找到 mihomo 可执行文件，请先下载安装")
 	}
+	// 在启动前读取具体二进制版本；仅当进程通过存活确认后才持久化为运行版本。
+	runningVersion, versionErr := getMihomoBinaryVersion(binary)
+	if versionErr != nil {
+		Warnf("启动前无法识别 mihomo 二进制版本，测速将沿用已记录兼容策略: %v", versionErr)
+	}
 
 	cfg := GlobalConfig()
 	configPath := cfg.MihomoConfigPath
@@ -170,6 +175,18 @@ func (p *MihomoProcess) Start() error {
 		}
 		return fmt.Errorf("mihomo 启动后立即退出: %v，请检查日志或配置文件", err)
 	case <-timer.C:
+	}
+
+	if versionErr == nil {
+		if _, err := UpdateGlobalConfig(func(c *Config) error {
+			c.MihomoRunningVersion = runningVersion
+			c.MihomoRunningVersionAt = time.Now().Format(time.RFC3339)
+			return nil
+		}); err != nil {
+			Warnf("记录运行中的 mihomo 版本失败: %v", err)
+		} else {
+			Infof("已记录运行中的 mihomo 版本: %s", runningVersion)
+		}
 	}
 
 	Infof("mihomo 已启动: pid=%d, dir=%s", cmd.Process.Pid, mihomoDir)

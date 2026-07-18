@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -22,6 +23,13 @@ func NewProxyPage(app *tview.Application) tview.Primitive {
 	cardsPerRow := 2
 	cardHeight := 4
 	cardMinWidth := 24
+
+	// 与 mihomo 配置和 provider 健康检查使用同一测试地址。此前此页面
+	// 硬编码 gstatic，在部分网络和新版内核下会导致测速失败而代理仍可用。
+	testURL := strings.TrimSpace(mihomotui.GlobalConfig().Mihomo.TestURL)
+	if testURL == "" {
+		testURL = "http://cp.cloudflare.com/generate_204"
+	}
 
 	// 顶部工具栏：代理组下拉框 + 测试延迟按钮
 	groupDropdown := tview.NewDropDown().
@@ -146,7 +154,7 @@ func NewProxyPage(app *tview.Application) tview.Primitive {
 						app.QueueUpdateDraw(refreshNodes)
 						return
 					}
-					delay, err := api.TestProxyDelayValue(nName, "https://www.gstatic.com/generate_204", 5000)
+					delay, err := api.TestProxyDelayValue(nName, testURL, 5000)
 					if err != nil {
 						node.Delay = -1
 						app.QueueUpdateDraw(refreshNodes)
@@ -235,7 +243,7 @@ func NewProxyPage(app *tview.Application) tview.Primitive {
 				return
 			}
 
-			delays, err := api.TestGroupDelayParsed(group.Name, "https://www.gstatic.com/generate_204", 5000)
+			delays, err := api.TestGroupDelayParsed(group.Name, testURL, 5000)
 			if err != nil {
 				if !isTesting {
 					return
@@ -398,6 +406,11 @@ func NewProxyPage(app *tview.Application) tview.Primitive {
 	// 加载代理数据（轮询，首次立即执行，之后每 5 秒刷新）
 	go func() {
 		for {
+			// 先从 daemon 状态同步实际运行内核版本，再访问 mihomo REST API。
+			// 这覆盖服务在 TUI 打开期间被 systemd 重启或切换版本的情况。
+			if client, err := mihomotui.GetIPCClient(); err == nil {
+				_, _ = client.IPCGetMihomoStatus()
+			}
 			api, err := mihomotui.GetMihomoAPI()
 			if err == nil {
 				groups, err := api.GetProxyGroups()

@@ -170,3 +170,82 @@ func TestMutateServerConfigRetriesOnConflict(t *testing.T) {
 		t.Fatalf("version = %d, want 2（两次真实提交）", committed.Version)
 	}
 }
+
+func TestIPCStartMihomoSynchronizesRunningVersion(t *testing.T) {
+	useTestConfigDir(t)
+	local := *GlobalConfig()
+	local.MihomoConfigPath = "/local/mihomo/config.yaml"
+	local.MihomoBinaryPath = "/local/bin/mihomo"
+	SetGlobalConfig(local)
+
+	serverCfg := local.Clone()
+	serverCfg.MihomoConfigPath = "/daemon/mihomo/config.yaml"
+	serverCfg.MihomoBinaryPath = "/daemon/bin/mihomo"
+	serverCfg.MihomoRunningVersion = "1.19.28"
+	serverCfg.MihomoRunningVersionAt = "2026-07-18T16:00:00+08:00"
+
+	useTestIPCServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/mihomo/start":
+			if r.Method != http.MethodPost {
+				t.Errorf("start method = %s, want POST", r.Method)
+			}
+			writeJSON(w, http.StatusOK, ok(nil))
+		case "/api/v1/config":
+			writeJSON(w, http.StatusOK, ok(ConfigResponse{Config: serverCfg}))
+		case "/api/v1/mihomo/api-credentials":
+			writeJSON(w, http.StatusOK, ok(map[string]string{"external_controller": "127.0.0.1:9090", "secret": "test-secret"}))
+		default:
+			t.Errorf("unexpected IPC request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+
+	client, err := GetIPCClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.IPCStartMihomo(); err != nil {
+		t.Fatalf("IPCStartMihomo() error = %v", err)
+	}
+	got := GlobalConfig()
+	if got.MihomoRunningVersion != "1.19.28" || got.MihomoRunningVersionAt == "" {
+		t.Fatalf("running version was not synchronized: %+v", got)
+	}
+	if got.MihomoConfigPath != local.MihomoConfigPath || got.MihomoBinaryPath != local.MihomoBinaryPath {
+		t.Fatalf("local paths must be retained: got config=%q binary=%q", got.MihomoConfigPath, got.MihomoBinaryPath)
+	}
+}
+
+func TestIPCGetMihomoStatusSynchronizesRunningVersion(t *testing.T) {
+	useTestConfigDir(t)
+	cfg := *GlobalConfig()
+	cfg.MihomoRunningVersion = "1.19.27"
+	SetGlobalConfig(cfg)
+
+	useTestIPCServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/mihomo/status" {
+			t.Errorf("unexpected IPC request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, http.StatusOK, ok(MihomoStatusResponse{
+			Running: true, PID: 1234, RunningVersion: "1.19.28", VersionAt: "2026-07-18T16:10:00+08:00",
+		}))
+	}))
+
+	client, err := GetIPCClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := client.IPCGetMihomoStatus()
+	if err != nil {
+		t.Fatalf("IPCGetMihomoStatus() error = %v", err)
+	}
+	if !status.Running || status.RunningVersion != "1.19.28" {
+		t.Fatalf("status = %+v", status)
+	}
+	if got := GlobalConfig().MihomoRunningVersion; got != "1.19.28" {
+		t.Fatalf("local running version = %q, want 1.19.28", got)
+	}
+}

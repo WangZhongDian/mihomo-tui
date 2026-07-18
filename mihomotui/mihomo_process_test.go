@@ -210,3 +210,28 @@ func TestStartUsesConfigRootAsMihomoHome(t *testing.T) {
 		t.Fatalf("Start() error = %v, want validated -d config root and -f config path", err)
 	}
 }
+
+func TestStartRecordsConfirmedRunningMihomoVersion(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("假 mihomo 脚本依赖 POSIX shell")
+	}
+	useTestConfigDir(t)
+	writeFakeMihomo(t, "#!/bin/sh\n"+
+		"if [ \"$1\" = \"-v\" ]; then echo 'Mihomo Meta v1.19.28'; exit 0; fi\n"+
+		"exec sleep 30\n")
+
+	p := NewMihomoProcess()
+	p.startSettle = 20 * time.Millisecond
+	if err := p.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	t.Cleanup(func() { _ = p.Stop() })
+
+	cfg := GlobalConfig()
+	if got, want := cfg.MihomoRunningVersion, "1.19.28"; got != want {
+		t.Fatalf("MihomoRunningVersion = %q, want %q", got, want)
+	}
+	if cfg.MihomoRunningVersionAt == "" {
+		t.Fatal("MihomoRunningVersionAt must be recorded after confirmed start")
+	}
+}

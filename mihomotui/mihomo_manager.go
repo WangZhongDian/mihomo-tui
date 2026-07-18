@@ -48,7 +48,12 @@ func GetCurrentMihomoVersion() (string, error) {
 		return "", fmt.Errorf("未找到 mihomo 可执行文件")
 	}
 	Infof("找到 mihomo 二进制文件: %s", binaryPath)
+	return getMihomoBinaryVersion(binaryPath)
+}
 
+// getMihomoBinaryVersion reads the actual version from a specific executable.
+// 启动器使用该函数记录真正启动的二进制版本，避免把“选中的版本”误当作运行版本。
+func getMihomoBinaryVersion(binaryPath string) (string, error) {
 	cmd := exec.Command(binaryPath, "-v")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -67,8 +72,8 @@ func GetCurrentMihomoVersion() (string, error) {
 		Errorf("无法从输出中解析版本号: %s", string(output))
 		return "", fmt.Errorf("无法从输出中解析版本号: %s", string(output))
 	}
-	Infof("当前 mihomo 版本: %s", version)
-	return version, nil
+	Infof("mihomo 二进制版本: %s", version)
+	return normalizeMihomoVersion(version), nil
 }
 
 // FindMihomoBinary 查找 mihomo 可执行文件路径（导出）

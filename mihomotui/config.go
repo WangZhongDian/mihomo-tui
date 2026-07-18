@@ -116,7 +116,11 @@ type Config struct {
 	MihomoConfigPath string `yaml:"mihomo_config_path"`
 	MihomoBinaryPath string `yaml:"mihomo_binary_path"`
 	// MihomoActiveVersion 标识 mihomo-tui 私有版本仓库中当前启用的内核。
-	MihomoActiveVersion     string              `yaml:"mihomo_active_version,omitempty"`
+	MihomoActiveVersion string `yaml:"mihomo_active_version,omitempty"`
+	// MihomoRunningVersion 是最近一次经启动确认的实际运行内核版本；
+	// API 兼容层只以此字段选择行为，不根据接口失败进行猜测或回退。
+	MihomoRunningVersion    string              `yaml:"mihomo_running_version,omitempty"`
+	MihomoRunningVersionAt  string              `yaml:"mihomo_running_version_at,omitempty"`
 	MihomoVersions          []MihomoVersionInfo `yaml:"mihomo_versions,omitempty"`
 	MihomoVersionsCheckedAt string              `yaml:"mihomo_versions_checked_at,omitempty"`
 	MihomoVersionsSource    string              `yaml:"mihomo_versions_source,omitempty"`

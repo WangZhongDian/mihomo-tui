@@ -28,7 +28,13 @@ func (d *Daemon) handleMihomoStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	running, pid := d.mihomoProcess.Status()
-	writeJSON(w, http.StatusOK, ok(MihomoStatusResponse{Running: running, PID: pid}))
+	cfg := GlobalConfig()
+	writeJSON(w, http.StatusOK, ok(MihomoStatusResponse{
+		Running:        running,
+		PID:            pid,
+		RunningVersion: cfg.MihomoRunningVersion,
+		VersionAt:      cfg.MihomoRunningVersionAt,
+	}))
 }
 
 func (d *Daemon) handleMihomoStart(w http.ResponseWriter, r *http.Request) {

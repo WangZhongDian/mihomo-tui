@@ -62,8 +62,10 @@ type DelayTestRequest struct {
 
 // MihomoStatusResponse mihomo 进程状态响应
 type MihomoStatusResponse struct {
-	Running bool `json:"running"`
-	PID     int  `json:"pid"`
+	Running        bool   `json:"running"`
+	PID            int    `json:"pid"`
+	RunningVersion string `json:"running_version,omitempty"`
+	VersionAt      string `json:"version_at,omitempty"`
 }
 
 // ProxyDelayResponse 代理延迟测试响应
