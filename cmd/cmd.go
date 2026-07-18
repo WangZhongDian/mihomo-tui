@@ -3,6 +3,7 @@ package cmd
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"mihomotui/mihomotui"
@@ -95,4 +96,49 @@ func RunCleanup() {
 	}
 	mihomotui.CleanupEnvironment()
 	fmt.Println("✅ 环境清理完成")
+}
+
+// RunSubscriptionImport 从 URL、文件或 stdin 导入订阅正文；不会执行用户提供的 shell 命令。
+func RunSubscriptionImport(args []string, globalDir string) {
+	fs := flag.NewFlagSet("subscription import", flag.ExitOnError)
+	name := fs.String("name", "", "订阅显示名称")
+	urlValue := fs.String("url", "", "远程订阅 URL")
+	fileValue := fs.String("file", "", "本地订阅文件")
+	stdin := fs.Bool("stdin", false, "从标准输入读取订阅正文")
+	useProxy := fs.Bool("via-local-proxy", false, "刷新远端 URL 时通过本地 mihomo HTTP 代理")
+	fs.Parse(args)
+	if globalDir != "" {
+		mihomotui.SetCustomConfigDir(globalDir)
+	}
+	if (*urlValue != "" && (*fileValue != "" || *stdin)) || (*fileValue != "" && *stdin) || (*urlValue == "" && *fileValue == "" && !*stdin) {
+		fmt.Fprintln(os.Stderr, "必须且只能指定 --url、--file 或 --stdin")
+		os.Exit(2)
+	}
+	client, err := mihomotui.GetIPCClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "连接 IPC 服务失败: %v\n", err)
+		os.Exit(1)
+	}
+	if *urlValue != "" {
+		err = client.IPCImportSubscriptionWithRequest(mihomotui.SubscriptionImportRequest{Name: *name, URL: *urlValue, SourceType: mihomotui.SubscriptionSourceURL, UseLocalProxy: *useProxy})
+	} else {
+		var data []byte
+		if *stdin {
+			data, err = io.ReadAll(os.Stdin)
+		} else {
+			data, err = os.ReadFile(*fileValue)
+		}
+		if err == nil {
+			source := *fileValue
+			if *stdin {
+				source = "stdin"
+			}
+			err = client.IPCImportSubscriptionContent(*name, source, mihomotui.SubscriptionSourceFile, string(data), false)
+		}
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "导入订阅失败: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("✅ 订阅已导入并由 mihomo-tui 主动接管")
 }

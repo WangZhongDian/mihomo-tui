@@ -131,6 +131,43 @@ func (c *Config) Validate() error {
 			c.ActiveSubscription, len(c.Subscriptions), len(c.Subscriptions)-1)
 	}
 
+	// ---- 订阅池：成员唯一归属、顺序和活动成员必须一致 ----
+	poolIDs := map[string]bool{}
+	memberOwner := map[string]string{}
+	for _, pool := range c.SubscriptionPools {
+		if strings.TrimSpace(pool.ID) == "" || poolIDs[pool.ID] {
+			add("订阅池 ID 为空或重复: %q", pool.ID)
+		}
+		poolIDs[pool.ID] = true
+		if strings.TrimSpace(pool.Name) == "" {
+			add("订阅池名称不能为空")
+		}
+		if pool.RefreshInterval < 0 {
+			add("订阅池 %q 刷新间隔不能为负数", pool.Name)
+		}
+		members := map[string]bool{}
+		for _, id := range pool.Members {
+			if members[id] {
+				add("订阅池 %q 成员重复: %s", pool.Name, id)
+			}
+			members[id] = true
+			if c.FindSubscriptionByID(id) < 0 {
+				add("订阅池 %q 引用了不存在的订阅: %s", pool.Name, id)
+			}
+			if old, exists := memberOwner[id]; exists {
+				add("订阅 %s 同时属于订阅池 %q 和 %q", id, old, pool.Name)
+			} else {
+				memberOwner[id] = pool.Name
+			}
+		}
+		if pool.Enabled && len(pool.Members) == 0 {
+			add("启用的订阅池 %q 没有成员", pool.Name)
+		}
+		if pool.ActiveMemberID != "" && !members[pool.ActiveMemberID] {
+			add("订阅池 %q 的活动成员不属于该集合", pool.Name)
+		}
+	}
+
 	// ---- 规则订阅：名称唯一，behavior/format/interval 合法 ----
 	rpNames := map[string]int{}
 	for i, rp := range c.RuleProviderSubscriptions {

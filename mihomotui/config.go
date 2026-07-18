@@ -53,16 +53,45 @@ type ExternalResources struct {
 }
 
 // SubscriptionMeta 订阅元数据
+// SubscriptionSource 描述订阅内容的来源；缓存始终由 daemon 管理。
+type SubscriptionSource string
+
+const (
+	SubscriptionSourceURL     SubscriptionSource = "url"
+	SubscriptionSourceFile    SubscriptionSource = "file"
+	SubscriptionSourceContent SubscriptionSource = "content"
+)
+
+// SubscriptionPool 是顺序主备订阅集合。Members 的顺序即优先级。
+type SubscriptionPool struct {
+	ID               string   `yaml:"id" json:"id"`
+	Name             string   `yaml:"name" json:"name"`
+	Members          []string `yaml:"members" json:"members"`
+	ActiveMemberID   string   `yaml:"active_member_id" json:"active_member_id"`
+	Enabled          bool     `yaml:"enabled" json:"enabled"`
+	RefreshInterval  int      `yaml:"refresh_interval" json:"refresh_interval"`
+	LastSwitchAt     string   `yaml:"last_switch_at,omitempty" json:"last_switch_at,omitempty"`
+	LastSwitchReason string   `yaml:"last_switch_reason,omitempty" json:"last_switch_reason,omitempty"`
+	Degraded         bool     `yaml:"degraded" json:"degraded"`
+}
+
+// SubscriptionMeta 保存订阅来源元数据；订阅正文只存在 CacheFile 指向的私有缓存中。
 type SubscriptionMeta struct {
-	ID            string  `yaml:"id"`
-	Name          string  `yaml:"name"`
-	URL           string  `yaml:"url"`
-	UpdatedAt     string  `yaml:"updated_at"`
-	LastSuccessAt string  `yaml:"last_success_at"`
-	LastFailureAt string  `yaml:"last_failure_at,omitempty"`
-	LastError     string  `yaml:"last_error,omitempty"`
-	UsedGB        float64 `yaml:"used_gb"`
-	TotalGB       float64 `yaml:"total_gb"`
+	ID            string             `yaml:"id"`
+	Name          string             `yaml:"name"`
+	URL           string             `yaml:"url"`
+	UpdatedAt     string             `yaml:"updated_at"`
+	LastSuccessAt string             `yaml:"last_success_at"`
+	LastFailureAt string             `yaml:"last_failure_at,omitempty"`
+	LastError     string             `yaml:"last_error,omitempty"`
+	UsedGB        float64            `yaml:"used_gb"`
+	TotalGB       float64            `yaml:"total_gb"`
+	SourceType    SubscriptionSource `yaml:"source_type,omitempty"`
+	CacheFile     string             `yaml:"cache_file,omitempty"`
+	ContentSHA256 string             `yaml:"content_sha256,omitempty"`
+	FailureCount  int                `yaml:"failure_count,omitempty"`
+	LastCheckedAt string             `yaml:"last_checked_at,omitempty"`
+	UseLocalProxy bool               `yaml:"use_local_proxy,omitempty"`
 }
 
 // RuleProviderSubscription 规则订阅元数据
@@ -83,12 +112,14 @@ type RuleProviderSubscription struct {
 type Config struct {
 	// Version 配置版本号，每次成功提交（校验 + 落盘 + 替换内存）递增。
 	// 客户端基于读取到的版本提交整份配置，daemon 借此检测陈旧客户端的并发覆盖。
-	Version                   int64                      `yaml:"version" json:"version"`
-	MihomoConfigPath          string                     `yaml:"mihomo_config_path"`
-	MihomoBinaryPath          string                     `yaml:"mihomo_binary_path"`
-	System                    SystemConfig               `yaml:"system"`
-	Mihomo                    MihomoConfig               `yaml:"mihomo"`
-	Subscriptions             []SubscriptionMeta         `yaml:"subscriptions"`
+	Version          int64              `yaml:"version" json:"version"`
+	MihomoConfigPath string             `yaml:"mihomo_config_path"`
+	MihomoBinaryPath string             `yaml:"mihomo_binary_path"`
+	System           SystemConfig       `yaml:"system"`
+	Mihomo           MihomoConfig       `yaml:"mihomo"`
+	Subscriptions    []SubscriptionMeta `yaml:"subscriptions"`
+	// SubscriptionPools owns active sources. ActiveSubscription remains for legacy compatibility.
+	SubscriptionPools         []SubscriptionPool         `yaml:"subscription_pools,omitempty"`
 	ActiveSubscription        int                        `yaml:"active_subscription"`
 	RuleProviderSubscriptions []RuleProviderSubscription `yaml:"rule_provider_subscriptions"`
 	CustomRules               []string                   `yaml:"custom_rules"`
@@ -197,6 +228,7 @@ func defaultConfig() Config {
 			ExternalController: "127.0.0.1:9090",
 		},
 		Subscriptions:      []SubscriptionMeta{},
+		SubscriptionPools:  []SubscriptionPool{},
 		ActiveSubscription: -1,
 		ExternalResources: ExternalResources{
 			GeoIP:   DEFAULT_GEOIP_DOWNLOAD_URL,
@@ -301,6 +333,22 @@ func LoadConfig() Config {
 		if cfg.Subscriptions[i].ID == "" {
 			cfg.Subscriptions[i].ID = newSubscriptionID()
 		}
+	}
+	// 迁移历史配置：所有现有订阅进入默认主备池，保持原列表优先级。
+	if len(cfg.Subscriptions) > 0 && len(cfg.SubscriptionPools) == 0 {
+		members := make([]string, 0, len(cfg.Subscriptions))
+		for i := range cfg.Subscriptions {
+			if cfg.Subscriptions[i].SourceType == "" {
+				cfg.Subscriptions[i].SourceType = SubscriptionSourceURL
+			}
+			members = append(members, cfg.Subscriptions[i].ID)
+		}
+		active := members[0]
+		if cfg.ActiveSubscription >= 0 && cfg.ActiveSubscription < len(cfg.Subscriptions) {
+			active = cfg.Subscriptions[cfg.ActiveSubscription].ID
+		}
+		cfg.SubscriptionPools = []SubscriptionPool{{ID: newSubscriptionID(), Name: "默认订阅池", Members: members, ActiveMemberID: active, Enabled: true, RefreshInterval: DayInSeconds}}
+		// 延后由 daemon 首次配置提交写回，避免 LoadConfig 期间递归写日志。
 	}
 	// 自愈：活动订阅索引越界时收敛到合法范围，避免后续提交校验失败。
 	if cfg.ActiveSubscription >= len(cfg.Subscriptions) {
@@ -455,14 +503,39 @@ func (c *Config) RemoveSubscription(name string) error {
 	if idx < 0 {
 		return fmt.Errorf("订阅不存在: %s", name)
 	}
+	removedID := c.Subscriptions[idx].ID
 
-	// 从列表中移除，并保持 ActiveSubscription 指向同一个逻辑订阅。
+	// 先同步订阅池成员关系。删除活动成员时选择剩余成员中的首个主备源；
+	// 空池保留以便用户后续重新配置，但自动禁用并标为降级状态。
+	for pi := range c.SubscriptionPools {
+		pool := &c.SubscriptionPools[pi]
+		members := pool.Members[:0]
+		for _, member := range pool.Members {
+			if member != removedID {
+				members = append(members, member)
+			}
+		}
+		pool.Members = members
+		if pool.ActiveMemberID == removedID {
+			if len(pool.Members) > 0 {
+				pool.ActiveMemberID = pool.Members[0]
+			} else {
+				pool.ActiveMemberID = ""
+			}
+		}
+		if len(pool.Members) == 0 {
+			pool.Enabled = false
+			pool.Degraded = true
+			pool.LastSwitchAt = timestampNow()
+			pool.LastSwitchReason = "订阅池成员已全部删除"
+		}
+	}
+
 	c.Subscriptions = append(c.Subscriptions[:idx], c.Subscriptions[idx+1:]...)
 	switch {
 	case len(c.Subscriptions) == 0:
 		c.ActiveSubscription = -1
 	case c.ActiveSubscription == idx:
-		// 删除当前激活订阅后，优先选择同位置的下一项；若删除的是末项则选择前一项。
 		if idx >= len(c.Subscriptions) {
 			c.ActiveSubscription = len(c.Subscriptions) - 1
 		} else {
@@ -473,7 +546,6 @@ func (c *Config) RemoveSubscription(name string) error {
 	case c.ActiveSubscription >= len(c.Subscriptions):
 		c.ActiveSubscription = len(c.Subscriptions) - 1
 	}
-
 	return nil
 }
 

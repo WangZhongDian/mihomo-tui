@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/gdamore/tcell/v2"
@@ -20,6 +21,9 @@ type Subscription struct {
 	LastError     string
 	UsedGB        float64
 	TotalGB       float64
+	FailureCount  int
+	CacheFile     string
+	SourceType    mihomotui.SubscriptionSource
 }
 
 // NewSubscriptionPage 创建订阅页面
@@ -41,6 +45,9 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 				LastError:     meta.LastError,
 				UsedGB:        meta.UsedGB,
 				TotalGB:       meta.TotalGB,
+				FailureCount:  meta.FailureCount,
+				CacheFile:     meta.CacheFile,
+				SourceType:    meta.SourceType,
 			})
 		}
 	}
@@ -77,6 +84,10 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 	importBtn := tview.NewButton(" 导入 ")
 	importBtn.SetBorder(false)
 
+	// 文件/粘贴导入按钮
+	contentBtn := tview.NewButton(" 文件/粘贴 ")
+	contentBtn.SetBorder(false)
+
 	// 新建按钮
 	newBtn := tview.NewButton(" 新建 ")
 	newBtn.SetBorder(false)
@@ -85,6 +96,7 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 	toolbar := tview.NewFlex().
 		AddItem(inputField, 0, 1, false).
 		AddItem(importBtn, 10, 0, false).
+		AddItem(contentBtn, 14, 0, false).
 		AddItem(newBtn, 10, 0, false)
 
 	// 订阅卡片列表容器
@@ -237,7 +249,13 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 			bar := strings.Repeat("━", filled) + strings.Repeat("─", progressWidth-filled)
 
 			// 信息文本（3行）
-			statusText := "[green]上次刷新成功[-]"
+			statusText := "[green]已由本地缓存接管[-]"
+			if sub.CacheFile == "" {
+				statusText = "[yellow]等待首次缓存[-]"
+			}
+			if sub.FailureCount > 0 {
+				statusText = fmt.Sprintf("[yellow]连续失败: %d[-]", sub.FailureCount)
+			}
 			if sub.LastError != "" {
 				statusText = fmt.Sprintf("[red]刷新失败: %s[-]", mihomotui.RedactURLInText(sub.LastError))
 			}
@@ -389,6 +407,90 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 				showModal("导入成功", fmt.Sprintf("成功导入订阅: %s", subscriptions[len(subscriptions)-1].Name))
 			})
 		}()
+	})
+
+	// 文件/粘贴导入：使用显式来源模式并将焦点固定到弹窗，避免粘贴落入背景 URL 输入框。
+	contentBtn.SetSelectedFunc(func() {
+		pages.RemovePage("content-import")
+		form := tview.NewForm()
+		nameField := tview.NewInputField().SetLabel("名称: ")
+		modeField := tview.NewDropDown().SetLabel("来源: ").SetOptions([]string{"粘贴内容", "本地文件"}, nil)
+		contentField := tview.NewTextArea().SetPlaceholder("粘贴 Clash YAML / Base64 / URI 列表")
+		pathField := tview.NewInputField().SetLabel("文件路径: ").SetPlaceholder("/path/to/subscription.yaml")
+		pathField.SetDisabled(true)
+		modeField.SetSelectedFunc(func(_ string, index int) {
+			isFile := index == 1
+			contentField.SetDisabled(isFile)
+			pathField.SetDisabled(!isFile)
+			if isFile {
+				form.SetFocus(2)
+				app.SetFocus(pathField)
+			} else {
+				form.SetFocus(1)
+				app.SetFocus(contentField)
+			}
+		})
+		form.AddFormItem(nameField).AddFormItem(contentField).AddFormItem(pathField).AddFormItem(modeField)
+		submitting := false
+		closeDialog := func() { pages.HidePage("content-import"); pages.RemovePage("content-import"); app.SetFocus(inputField) }
+		form.AddButton("导入", func() {
+			if submitting {
+				return
+			}
+			name := strings.TrimSpace(nameField.GetText())
+			selected, _ := modeField.GetCurrentOption()
+			content := strings.TrimSpace(contentField.GetText())
+			source, sourceType := "粘贴内容", mihomotui.SubscriptionSourceContent
+			if selected == 1 {
+				path := strings.TrimSpace(pathField.GetText())
+				if path == "" {
+					showModal("导入失败", "请选择本地订阅文件")
+					return
+				}
+				data, err := os.ReadFile(path)
+				if err != nil {
+					showModal("读取文件失败", err.Error())
+					return
+				}
+				content, source, sourceType = string(data), path, mihomotui.SubscriptionSourceFile
+			}
+			if content == "" {
+				showModal("导入失败", "请粘贴订阅内容")
+				return
+			}
+			submitting = true
+			go func() {
+				client, err := mihomotui.GetIPCClient()
+				if err == nil {
+					err = client.IPCImportSubscriptionContent(name, source, sourceType, content, false)
+				}
+				if err != nil {
+					app.QueueUpdateDraw(func() { submitting = false; showModal("导入失败", err.Error()); app.SetFocus(contentField) })
+					return
+				}
+				cfg2, syncErr := client.IPCGetConfig()
+				app.QueueUpdateDraw(func() {
+					submitting = false
+					if syncErr != nil {
+						showModal("导入成功，但同步失败", syncErr.Error())
+						app.SetFocus(contentField)
+						return
+					}
+					cfg = cfg2
+					mihomotui.SyncConfigFromServer(cfg2)
+					mihomotui.ResetMihomoAPI()
+					reloadSubs()
+					refreshCards()
+					closeDialog()
+					showModal("导入成功", "订阅内容已缓存并由本程序主动管理")
+				})
+			}()
+		})
+		form.AddButton("取消", closeDialog)
+		form.SetBorder(true).SetTitle("文件或粘贴内容导入")
+		pages.AddPage("content-import", form, true, true)
+		form.SetFocus(1)
+		app.SetFocus(contentField)
 	})
 
 	// 新建按钮回调（通过 IPC）

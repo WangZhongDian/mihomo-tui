@@ -17,6 +17,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "用法:")
 		fmt.Fprintln(os.Stderr, "  mihomo-tui [选项]              启动 TUI 客户端")
 		fmt.Fprintln(os.Stderr, "  mihomo-tui server [选项]       启动后台 IPC 服务")
+		fmt.Fprintln(os.Stderr, "  mihomo-tui subscription import --url/--file/--stdin  导入订阅")
 		fmt.Fprintln(os.Stderr, "  mihomo-tui install_service     安装为 systemd 服务（需 root）")
 		fmt.Fprintln(os.Stderr, "  mihomo-tui uninstall           卸载 systemd 服务（需 root）")
 		fmt.Fprintln(os.Stderr, "  mihomo-tui grant_operator 用户  授予普通用户订阅管理权限（需 root）")
@@ -41,6 +42,12 @@ func main() {
 	switch args[0] {
 	case "server":
 		cmd.RunServer(args[1:], *dir)
+	case "subscription":
+		if len(args) < 2 || args[1] != "import" {
+			fmt.Fprintln(os.Stderr, "用法: mihomo-tui subscription import --url/--file/--stdin")
+			os.Exit(1)
+		}
+		cmd.RunSubscriptionImport(args[2:], *dir)
 	case "install_service":
 		cmd.RunInstallService(*dir)
 	case "uninstall":

@@ -25,9 +25,21 @@ type ConfigUpdateResponse struct {
 
 // SubscriptionImportRequest 导入订阅请求
 type SubscriptionImportRequest struct {
-	Name   string `json:"name,omitempty"`
-	URL    string `json:"url,omitempty"`
-	Manual bool   `json:"manual,omitempty"`
+	Name          string             `json:"name,omitempty"`
+	URL           string             `json:"url,omitempty"`
+	Manual        bool               `json:"manual,omitempty"`
+	SourceType    SubscriptionSource `json:"source_type,omitempty"`
+	Content       string             `json:"content,omitempty"` // 文件/粘贴正文；不在响应中回传
+	UseLocalProxy bool               `json:"use_local_proxy,omitempty"`
+}
+
+// SubscriptionPoolRequest 创建或更新订阅池；Members 顺序即故障切换优先级。
+type SubscriptionPoolRequest struct {
+	Name            string   `json:"name"`
+	Members         []string `json:"members"`
+	ActiveMemberID  string   `json:"active_member_id,omitempty"`
+	Enabled         bool     `json:"enabled"`
+	RefreshInterval int      `json:"refresh_interval,omitempty"`
 }
 
 // ProxySelectRequest 选择代理请求

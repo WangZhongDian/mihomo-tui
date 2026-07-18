@@ -39,7 +39,8 @@ type providerOverrideYAML struct {
 
 // proxyProviderYAML proxy-provider 配置
 type proxyProviderYAML struct {
-	URL         string               `yaml:"url"`
+	URL         string               `yaml:"url,omitempty"`
+	Path        string               `yaml:"path,omitempty"`
 	Type        string               `yaml:"type"`
 	Interval    int                  `yaml:"interval"`
 	HealthCheck healthCheckYAML      `yaml:"health-check"`
@@ -282,31 +283,43 @@ func (c *Config) ensureSecret() error {
 
 // buildProxyConfig 构建代理相关配置（proxy-providers、proxies、proxy-groups）
 func (c *Config) buildProxyConfig() (map[string]proxyProviderYAML, []proxyYAML, []proxyGroupYAML, error) {
-	if len(c.Subscriptions) == 0 {
-		return nil, nil, nil, fmt.Errorf("没有订阅，请先导入订阅")
+	// provider 正文由 daemon 主动拉取并写入私有缓存，mihomo 仅读取本地文件。
+	activeSubscriptions, err := c.activePoolSubscriptions()
+	legacyRemote := false
+	if err != nil {
+		// 仅供尚未被 daemon 迁移的内存旧配置兼容使用；daemon 正式运行时始终使用本地缓存。
+		if len(c.SubscriptionPools) == 0 && len(c.Subscriptions) > 0 {
+			activeSubscriptions = c.Subscriptions
+			legacyRemote = true
+		} else {
+			return nil, nil, nil, err
+		}
 	}
 
 	proxyProviders := make(map[string]proxyProviderYAML)
-	providerNames := make([]string, 0, len(c.Subscriptions))
-	for i, sub := range c.Subscriptions {
-		if sub.URL == "" || sub.URL == "手动配置" {
+	providerNames := make([]string, 0, len(activeSubscriptions))
+	for i, sub := range activeSubscriptions {
+		if legacyRemote && (sub.URL == "" || sub.URL == "手动配置") {
 			continue
 		}
 		providerName := fmt.Sprintf("provider%d", i+1)
 		providerNames = append(providerNames, providerName)
-		proxyProviders[providerName] = proxyProviderYAML{
-			URL:      sub.URL,
-			Type:     "http",
-			Interval: DayInSeconds,
+		provider := proxyProviderYAML{Type: "file", Interval: 0,
+			Path: sub.CacheFile,
 			HealthCheck: healthCheckYAML{
 				Enable:   true,
 				URL:      c.Mihomo.TestURL,
 				Interval: HealthCheckInterval,
 			},
-			Override: providerOverrideYAML{
-				AdditionalPrefix: "",
-			},
+			Override: providerOverrideYAML{AdditionalPrefix: ""},
 		}
+		if legacyRemote {
+			provider.Type = "http"
+			provider.URL = sub.URL
+			provider.Path = ""
+			provider.Interval = DayInSeconds
+		}
+		proxyProviders[providerName] = provider
 	}
 	if len(providerNames) == 0 {
 		return nil, nil, nil, fmt.Errorf("没有有效的订阅 URL")

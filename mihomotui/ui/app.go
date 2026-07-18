@@ -30,12 +30,13 @@ func Run(standalone bool) error {
 		os.Exit(1)
 	}
 
-	app := tview.NewApplication().EnableMouse(true)
+	app := tview.NewApplication().EnableMouse(true).EnablePaste(true)
 
 	// 先创建所有页面，用于后续键盘导航判断
 	homePage, _ := NewDashboard(app)
 	proxyPage := NewProxyPage(app)
 	subPage := NewSubscriptionPage(app)
+	poolPage := NewSubscriptionPoolPage(app)
 	connPage := NewConnectionsPage(app)
 	rulesPage := NewRulesPage(app)
 	logsPage := NewLogsPage(app)
@@ -49,6 +50,7 @@ func Run(standalone bool) error {
 	pages.AddPage("home", homePage, true, true)
 	pages.AddPage("proxy", proxyPage, true, false)
 	pages.AddPage("subscription", subPage, true, false)
+	pages.AddPage("subscription-pools", poolPage, true, false)
 	pages.AddPage("connections", connPage, true, false)
 	pages.AddPage("rules", rulesPage, true, false)
 	pages.AddPage("logs", logsPage, true, false)
@@ -56,13 +58,14 @@ func Run(standalone bool) error {
 
 	// 页面映射，用于生命周期管理
 	pageMap := map[string]tview.Primitive{
-		"home":         homePage,
-		"proxy":        proxyPage,
-		"subscription": subPage,
-		"connections":  connPage,
-		"rules":        rulesPage,
-		"logs":         logsPage,
-		"settings":     settingsPage,
+		"home":               homePage,
+		"proxy":              proxyPage,
+		"subscription":       subPage,
+		"subscription-pools": poolPage,
+		"connections":        connPage,
+		"rules":              rulesPage,
+		"logs":               logsPage,
+		"settings":           settingsPage,
 	}
 	var currentPage string
 
@@ -85,6 +88,7 @@ func Run(standalone bool) error {
 		AddItem(" 首页", "", 0, switchPage("home")).
 		AddItem(" 代理", "", 0, switchPage("proxy")).
 		AddItem(" 订阅", "", 0, switchPage("subscription")).
+		AddItem(" 订阅池", "", 0, switchPage("subscription-pools")).
 		AddItem(" 连接", "", 0, switchPage("connections")).
 		AddItem(" 规则", "", 0, switchPage("rules")).
 		AddItem(" 日志", "", 0, switchPage("logs")).

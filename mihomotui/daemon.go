@@ -22,9 +22,10 @@ type Daemon struct {
 	upgradeProgress UpgradeProgress
 
 	// 配置应用串行化（P1）：所有运行时应用任务经 reconcileCh 排队逐个执行。
-	reconcileOnce  sync.Once
-	reconcileCh    chan reconcileRequest
-	reconcileApply reconcileApplyFunc // 测试注入点；为 nil 时使用 runReconcile
+	reconcileOnce               sync.Once
+	reconcileCh                 chan reconcileRequest
+	reconcileApply              reconcileApplyFunc // 测试注入点；为 nil 时使用 runReconcile
+	subscriptionSchedulerCancel context.CancelFunc
 }
 
 // RunDaemon 启动 IPC 后台服务
@@ -51,6 +52,15 @@ func (d *Daemon) Run() error {
 	// 初始化全局配置（服务端独占）
 	cfg := GlobalConfig()
 	Infof("守护进程启动，配置目录: %s", configDir)
+
+	// 将 LoadConfig 完成的历史订阅池迁移原子写回，保证下一次启动无需再次迁移。
+	if len(cfg.Subscriptions) > 0 && len(cfg.SubscriptionPools) > 0 {
+		if committed, err := UpdateGlobalConfig(func(c *Config) error { return nil }); err != nil {
+			Warnf("持久化订阅池迁移失败: %v", err)
+		} else {
+			cfg = &committed
+		}
+	}
 
 	// 确保 API secret 已设置（mihomo external-controller 需要认证）；
 	// 通过原子提交持久化，失败时内存与磁盘保持一致。
@@ -82,6 +92,7 @@ func (d *Daemon) Run() error {
 
 	// 初始化 mihomo 进程管理器
 	d.mihomoProcess = NewMihomoProcess()
+	d.startSubscriptionScheduler()
 
 	// 初始化 IPC 授权器，并以最小权限创建 socket 目录。root daemon 只允许
 	// mihomo-tui 组成员通过 socket 访问；普通 daemon 则只允许启动它的用户访问。
@@ -134,6 +145,9 @@ func (d *Daemon) Run() error {
 
 // Stop 停止守护进程
 func (d *Daemon) Stop() error {
+	if d.subscriptionSchedulerCancel != nil {
+		d.subscriptionSchedulerCancel()
+	}
 	if d.server != nil {
 		return d.server.Shutdown(context.Background())
 	}
@@ -150,6 +164,8 @@ func (d *Daemon) router() http.Handler {
 	// 订阅
 	mux.HandleFunc("/api/v1/subscriptions", d.handleSubscriptions)
 	mux.HandleFunc("/api/v1/subscriptions/", d.handleSubscriptionDetail)
+	mux.HandleFunc("/api/v1/subscription-pools", d.handleSubscriptionPools)
+	mux.HandleFunc("/api/v1/subscription-pools/", d.handleSubscriptionPoolDetail)
 
 	// 规则订阅
 	mux.HandleFunc("/api/v1/rule-providers", d.handleRuleProviders)

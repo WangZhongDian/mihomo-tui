@@ -20,6 +20,7 @@ var subscriptionHTTPClient = &http.Client{Timeout: DefaultIPCRequestTimeout}
 type subscriptionFetchResult struct {
 	UsedGB  float64
 	TotalGB float64
+	Content []byte
 }
 
 func (d *Daemon) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
@@ -41,7 +42,19 @@ func (d *Daemon) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, ok(nil))
 			return
 		}
-		if err := d.importSubscription(req.Name, req.URL); err != nil {
+		var err error
+		if strings.TrimSpace(req.Content) != "" {
+			content := []byte(req.Content)
+			err = d.importSubscriptionContent(req.Name, req.URL, normalizedSource(req.SourceType), content, subscriptionFetchResult{Content: content}, req.UseLocalProxy)
+		} else {
+			result, fetchErr := fetchSubscriptionWithProxy(req.URL, req.UseLocalProxy)
+			if fetchErr != nil {
+				err = fetchErr
+			} else {
+				err = d.importSubscriptionContent(req.Name, req.URL, SubscriptionSourceURL, result.Content, result, req.UseLocalProxy)
+			}
+		}
+		if err != nil {
 			writeError(w, http.StatusBadRequest, fmt.Errorf("导入订阅失败: %w", err))
 			return
 		}
@@ -51,67 +64,79 @@ func (d *Daemon) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// importSubscription 在写入配置前验证远端订阅，并保存可用于展示的订阅元数据。
+// importSubscription 下载远端内容并由 daemon 接管为本地缓存。
 func (d *Daemon) importSubscription(requestedName, rawURL string) error {
-	result, err := fetchSubscription(rawURL)
+	result, err := fetchSubscriptionWithProxy(rawURL, false)
 	if err != nil {
 		return err
 	}
+	return d.importSubscriptionContent(requestedName, rawURL, SubscriptionSourceURL, result.Content, result, false)
+}
 
-	// 原子提交订阅变更：克隆 → 修改 → 校验 → 落盘 → 替换内存。
-	// 显式指定的名称按“更新同名订阅”处理；未指定名称时按 URL 去重，
-	// 避免重复导入生成不断递增的临时名称，同时保持已有订阅 ID 稳定。
+// importSubscriptionContent 统一处理 URL、文件和粘贴内容；正文绝不进入配置或 IPC 响应。
+func (d *Daemon) importSubscriptionContent(requestedName, source string, sourceType SubscriptionSource, content []byte, result subscriptionFetchResult, useLocalProxy bool) error {
 	var name string
-	var active bool
-	_, err = UpdateGlobalConfig(func(cfg *Config) error {
+	var shouldApply bool
+	_, err := UpdateGlobalConfig(func(cfg *Config) error {
 		name = strings.TrimSpace(requestedName)
 		idx := -1
 		if name != "" {
 			idx = cfg.FindSubscriptionByName(name)
 		}
-		if idx < 0 {
-			idx = findSubscriptionByURL(cfg, rawURL)
+		if idx < 0 && sourceType == SubscriptionSourceURL {
+			idx = findSubscriptionByURL(cfg, source)
 		}
 		if idx >= 0 {
 			name = cfg.Subscriptions[idx].Name
 		} else {
-			name = uniqueSubscriptionName(name, rawURL, cfg)
+			name = uniqueSubscriptionName(name, source, cfg)
 		}
-
-		now := time.Now().Format(TimeFormatShort)
+		var id string
 		if idx >= 0 {
-			cfg.Subscriptions[idx].URL = rawURL
-			cfg.Subscriptions[idx].UpdatedAt = now
-			cfg.Subscriptions[idx].LastSuccessAt = now
-			cfg.Subscriptions[idx].LastError = ""
-			cfg.Subscriptions[idx].LastFailureAt = ""
-			cfg.Subscriptions[idx].UsedGB = result.UsedGB
-			cfg.Subscriptions[idx].TotalGB = result.TotalGB
+			id = cfg.Subscriptions[idx].ID
 		} else {
-			cfg.Subscriptions = append(cfg.Subscriptions, SubscriptionMeta{
-				ID:            newSubscriptionID(),
-				Name:          name,
-				URL:           rawURL,
-				UpdatedAt:     now,
-				LastSuccessAt: now,
-				UsedGB:        result.UsedGB,
-				TotalGB:       result.TotalGB,
-			})
+			id = newSubscriptionID()
+		}
+		cache, digest, cacheErr := writeSubscriptionCache(id, content)
+		if cacheErr != nil {
+			return cacheErr
+		}
+		now := timestampNow()
+		meta := SubscriptionMeta{ID: id, Name: name, URL: source, SourceType: sourceType, CacheFile: cache, ContentSHA256: digest, UpdatedAt: now, LastSuccessAt: now, LastCheckedAt: now, UsedGB: result.UsedGB, TotalGB: result.TotalGB, UseLocalProxy: useLocalProxy}
+		if idx >= 0 {
+			cfg.Subscriptions[idx] = meta
+		} else {
+			cfg.Subscriptions = append(cfg.Subscriptions, meta)
 			idx = len(cfg.Subscriptions) - 1
 		}
-		active = cfg.ActiveSubscription == idx
+		pool := cfg.ensureDefaultPool()
+		present := false
+		for _, member := range pool.Members {
+			if member == id {
+				present = true
+				break
+			}
+		}
+		if !present {
+			pool.Members = append(pool.Members, id)
+		}
+		if pool.ActiveMemberID == "" {
+			pool.ActiveMemberID = id
+		}
+		// 保持遗留字段可用。
+		cfg.ActiveSubscription = idx
+		shouldApply = pool.ActiveMemberID == id && pool.Enabled
 		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("保存订阅失败: %w", err)
 	}
-
-	if active {
+	if shouldApply {
 		if report := d.reconcileLatest("subscription-import"); !report.Applied {
-			return fmt.Errorf("订阅导入成功，但应用新配置失败: %s", report.Err)
+			return fmt.Errorf("订阅已缓存，但应用新配置失败: %s", report.Err)
 		}
 	}
-	Infof("订阅导入成功: name=%s url=%s", name, RedactURL(rawURL))
+	Infof("订阅已主动接管: name=%s source=%s", name, RedactURL(source))
 	return nil
 }
 
@@ -137,61 +162,110 @@ func (d *Daemon) createManualSubscription(requestedName string) error {
 	return nil
 }
 
-func (d *Daemon) refreshSubscription(name string) error {
+func (d *Daemon) refreshSubscription(identifier string) error {
 	cfg := GlobalConfig()
-	idx := cfg.FindSubscriptionByIdentifier(name)
+	idx := cfg.FindSubscriptionByIdentifier(identifier)
 	if idx < 0 {
-		return fmt.Errorf("订阅不存在: %s", name)
+		return fmt.Errorf("订阅不存在: %s", identifier)
 	}
 	sub := cfg.Subscriptions[idx]
-	resolvedName := sub.Name
-	if sub.URL == "" || sub.URL == "手动配置" {
-		return fmt.Errorf("手动配置不能从远端刷新")
+	if normalizedSource(sub.SourceType) != SubscriptionSourceURL || strings.TrimSpace(sub.URL) == "" {
+		return fmt.Errorf("订阅 %q 不是可刷新的远程 URL", sub.Name)
 	}
-
-	// 网络请求在提交前完成；提交时按标识符重新定位订阅，
-	// 避免刷新期间订阅被删除导致的索引错乱。
-	result, fetchErr := fetchSubscription(sub.URL)
+	result, fetchErr := fetchSubscriptionWithProxy(sub.URL, sub.UseLocalProxy)
 	var active bool
-	_, err := UpdateGlobalConfig(func(cfg *Config) error {
-		idx := cfg.FindSubscriptionByIdentifier(name)
-		if idx < 0 {
-			return fmt.Errorf("订阅在刷新期间已被删除: %s", resolvedName)
+	_, err := UpdateGlobalConfig(func(next *Config) error {
+		i := next.FindSubscriptionByID(sub.ID)
+		if i < 0 {
+			return fmt.Errorf("订阅在刷新期间已被删除: %s", sub.Name)
 		}
-		now := time.Now().Format(TimeFormatShort)
+		now := timestampNow()
+		item := &next.Subscriptions[i]
+		item.LastCheckedAt = now
 		if fetchErr != nil {
-			// 刷新失败同样提交错误状态，便于 UI 展示失败时间与原因
-			cfg.Subscriptions[idx].LastError = fetchErr.Error()
-			cfg.Subscriptions[idx].LastFailureAt = now
+			item.FailureCount++
+			item.LastError = fetchErr.Error()
+			item.LastFailureAt = now
 			return nil
 		}
-		cfg.Subscriptions[idx].UpdatedAt = now
-		cfg.Subscriptions[idx].LastSuccessAt = now
-		cfg.Subscriptions[idx].LastError = ""
-		cfg.Subscriptions[idx].LastFailureAt = ""
-		cfg.Subscriptions[idx].UsedGB = result.UsedGB
-		cfg.Subscriptions[idx].TotalGB = result.TotalGB
-		active = cfg.ActiveSubscription == idx
+		cache, digest, cacheErr := writeSubscriptionCache(item.ID, result.Content)
+		if cacheErr != nil {
+			return cacheErr
+		}
+		item.CacheFile = cache
+		item.ContentSHA256 = digest
+		item.UpdatedAt = now
+		item.LastSuccessAt = now
+		item.LastError = ""
+		item.LastFailureAt = ""
+		item.FailureCount = 0
+		item.UsedGB = result.UsedGB
+		item.TotalGB = result.TotalGB
+		for _, pool := range next.SubscriptionPools {
+			if pool.ActiveMemberID == item.ID && pool.Enabled {
+				active = true
+			}
+		}
 		return nil
 	})
 	if err != nil {
-		if fetchErr != nil {
-			return fmt.Errorf("刷新失败且保存错误状态失败: %w", err)
-		}
-		return err
+		return fmt.Errorf("保存刷新状态失败: %w", err)
 	}
 	if fetchErr != nil {
-		Warnf("订阅刷新失败: name=%s url=%s err=%v", resolvedName, RedactURL(sub.URL), fetchErr)
+		d.failoverSubscription(sub.ID, fetchErr)
 		return fetchErr
 	}
-
 	if active {
 		if report := d.reconcileLatest("subscription-refresh"); !report.Applied {
-			return fmt.Errorf("订阅刷新成功，但应用新配置失败: %s", report.Err)
+			return fmt.Errorf("订阅已刷新，但应用失败: %s", report.Err)
 		}
 	}
-	Infof("订阅刷新成功: name=%s url=%s", resolvedName, RedactURL(sub.URL))
 	return nil
+}
+
+// failoverSubscription 在当前活动源连续失败时，按集合顺序选择拥有有效缓存的备用源。
+func (d *Daemon) failoverSubscription(failedID string, cause error) {
+	var switched bool
+	_, err := UpdateGlobalConfig(func(cfg *Config) error {
+		for pi := range cfg.SubscriptionPools {
+			pool := &cfg.SubscriptionPools[pi]
+			if !pool.Enabled || pool.ActiveMemberID != failedID {
+				continue
+			}
+			failed := cfg.FindSubscriptionByID(failedID)
+			if failed < 0 || cfg.Subscriptions[failed].FailureCount < subscriptionFailureThreshold {
+				continue
+			}
+			for _, candidate := range pool.Members {
+				ci := cfg.FindSubscriptionByID(candidate)
+				if candidate == failedID || ci < 0 || !hasSubscriptionCache(cfg.Subscriptions[ci]) || cfg.Subscriptions[ci].FailureCount >= subscriptionFailureThreshold {
+					continue
+				}
+				pool.ActiveMemberID = candidate
+				pool.Degraded = false
+				pool.LastSwitchAt = timestampNow()
+				pool.LastSwitchReason = RedactURLInText(cause.Error())
+				switched = true
+				break
+			}
+			if !switched {
+				pool.Degraded = true
+				pool.LastSwitchAt = timestampNow()
+				pool.LastSwitchReason = "所有订阅源不可用: " + RedactURLInText(cause.Error())
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		Warnf("更新订阅池故障状态失败: %v", err)
+		return
+	}
+	if switched {
+		Infof("订阅池已自动切换备用源: failed=%s", failedID)
+		if report := d.reconcileLatest("subscription-failover"); !report.Applied {
+			Warnf("订阅池切换后应用失败: %s", report.Err)
+		}
+	}
 }
 
 func (d *Daemon) handleSubscriptionDetail(w http.ResponseWriter, r *http.Request) {
@@ -275,6 +349,11 @@ func hasUsableProxySubscription(cfg *Config) bool {
 }
 
 func fetchSubscription(rawURL string) (subscriptionFetchResult, error) {
+	return fetchSubscriptionWithProxy(rawURL, false)
+}
+
+// fetchSubscriptionWithProxy 可通过当前 mihomo HTTP 代理拉取受限订阅；代理不可用时返回错误，旧缓存不会被覆盖。
+func fetchSubscriptionWithProxy(rawURL string, useLocalProxy bool) (subscriptionFetchResult, error) {
 	parsed, err := validateSubscriptionURL(rawURL)
 	if err != nil {
 		return subscriptionFetchResult{}, err
@@ -285,7 +364,18 @@ func fetchSubscription(rawURL string) (subscriptionFetchResult, error) {
 	if err != nil {
 		return subscriptionFetchResult{}, fmt.Errorf("构造订阅请求失败: %w", err)
 	}
-	resp, err := subscriptionHTTPClient.Do(req)
+	client := subscriptionHTTPClient
+	if useLocalProxy {
+		cfg := GlobalConfig()
+		proxyURL, perr := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", cfg.Mihomo.HTTPPort))
+		if perr != nil {
+			return subscriptionFetchResult{}, fmt.Errorf("构造本地代理失败: %w", perr)
+		}
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = http.ProxyURL(proxyURL)
+		client = &http.Client{Timeout: DefaultIPCRequestTimeout, Transport: transport}
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return subscriptionFetchResult{}, fmt.Errorf("下载订阅失败: %s", RedactURLInText(err.Error()))
 	}
@@ -304,7 +394,9 @@ func fetchSubscription(rawURL string) (subscriptionFetchResult, error) {
 	if err := validateSubscriptionContent(content); err != nil {
 		return subscriptionFetchResult{}, err
 	}
-	return parseSubscriptionUserInfo(resp.Header.Get("subscription-userinfo")), nil
+	result := parseSubscriptionUserInfo(resp.Header.Get("subscription-userinfo"))
+	result.Content = content
+	return result, nil
 }
 
 // validateSubscriptionContent 在不保存订阅正文的前提下做轻量格式识别，

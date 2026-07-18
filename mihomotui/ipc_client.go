@@ -544,3 +544,53 @@ func (c *IPCClient) IPCDeleteRuleProvider(name string) error {
 	_, err := c.requestJSON(http.MethodDelete, "/api/v1/rule-providers/"+url.PathEscape(name), nil, nil)
 	return err
 }
+
+// IPCGetSubscriptionPools 获取订阅池及其脱敏健康状态。
+func (c *IPCClient) IPCGetSubscriptionPools() ([]SubscriptionPool, error) {
+	resp, err := c.requestJSON(http.MethodGet, "/api/v1/subscription-pools", nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return unmarshalData[[]SubscriptionPool](resp)
+}
+
+// IPCImportSubscriptionContent 导入文件或粘贴正文；正文只在请求中传输。
+func (c *IPCClient) IPCImportSubscriptionContent(name, source string, sourceType SubscriptionSource, content string, useProxy bool) error {
+	return c.IPCImportSubscriptionWithRequest(SubscriptionImportRequest{Name: name, URL: source, SourceType: sourceType, Content: content, UseLocalProxy: useProxy})
+}
+
+// IPCCreateSubscriptionPool 创建顺序主备订阅池。
+func (c *IPCClient) IPCCreateSubscriptionPool(req SubscriptionPoolRequest) (string, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.requestJSON(http.MethodPost, "/api/v1/subscription-pools", body, nil)
+	if err != nil {
+		return "", err
+	}
+	result, err := unmarshalData[map[string]string](resp)
+	return result["id"], err
+}
+
+// IPCUpdateSubscriptionPool 更新成员顺序、活动源和刷新策略。
+func (c *IPCClient) IPCUpdateSubscriptionPool(id string, req SubscriptionPoolRequest) error {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+	_, err = c.requestJSON(http.MethodPut, "/api/v1/subscription-pools/"+url.PathEscape(id), body, nil)
+	return err
+}
+
+// IPCDeleteSubscriptionPool 删除订阅池，不删除其中缓存的订阅源。
+func (c *IPCClient) IPCDeleteSubscriptionPool(id string) error {
+	_, err := c.requestJSON(http.MethodDelete, "/api/v1/subscription-pools/"+url.PathEscape(id), nil, nil)
+	return err
+}
+
+// IPCRefreshSubscriptionPool 立即刷新订阅池全部远程成员。
+func (c *IPCClient) IPCRefreshSubscriptionPool(id string) error {
+	_, err := c.requestJSON(http.MethodPost, "/api/v1/subscription-pools/"+url.PathEscape(id)+"/refresh", nil, nil)
+	return err
+}
