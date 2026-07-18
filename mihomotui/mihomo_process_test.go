@@ -187,3 +187,26 @@ func TestStopForceKillsUnresponsiveProcess(t *testing.T) {
 		t.Fatal("IsRunning() = true after force kill")
 	}
 }
+
+// TestStartUsesConfigRootAsMihomoHome ensures that local subscription caches
+// under <config>/subscriptions remain inside mihomo's SAFE_PATHS boundary.
+func TestStartUsesConfigRootAsMihomoHome(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("假 mihomo 脚本依赖 POSIX shell")
+	}
+	useTestConfigDir(t)
+	configDir := GetConfigDir()
+	configPath := filepath.Join(configDir, "mihomo", MIHOMO_CONFIG_NAME)
+	writeFakeMihomo(t, "#!/bin/sh\n"+
+		"if [ \"$1\" = \"-d\" ] && [ \"$2\" = \""+configDir+"\" ] && [ \"$3\" = \"-f\" ] && [ \"$4\" = \""+configPath+"\" ]; then\n"+
+		"  echo 'arguments verified' >&2\n"+
+		"else\n"+
+		"  echo \"unexpected arguments: $*\" >&2\n"+
+		"fi\n"+
+		"exit 1\n")
+
+	err := NewMihomoProcess().Start()
+	if err == nil || !strings.Contains(err.Error(), "arguments verified") {
+		t.Fatalf("Start() error = %v, want validated -d config root and -f config path", err)
+	}
+}

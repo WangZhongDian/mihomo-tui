@@ -100,20 +100,29 @@ func (p *MihomoProcess) Start() error {
 	}
 
 	cfg := GlobalConfig()
-	mihomoDir := filepath.Dir(cfg.MihomoConfigPath)
-	// 自动创建 mihomo 工作目录
+	configPath := cfg.MihomoConfigPath
+	mihomoDir := filepath.Dir(configPath)
+	// mihomo 1.19 起会将 -d 指定的 home 目录作为本地 provider 的
+	// SAFE_PATHS 边界。订阅缓存位于配置根目录的 subscriptions/ 下，
+	// 因此 home 必须覆盖整个配置根目录，而不能仅限于 mihomo/。
+	// 配置文件仍通过 -f 显式指定，保持原有的 mihomo/config.yaml 布局。
+	mihomoHome := GetConfigDir()
+	if err := os.MkdirAll(mihomoHome, 0700); err != nil {
+		p.mu.Unlock()
+		return fmt.Errorf("创建 mihomo 主目录失败: %w", err)
+	}
+	// 自动创建生成配置所在的工作目录。
 	if err := os.MkdirAll(mihomoDir, 0700); err != nil {
 		p.mu.Unlock()
 		return fmt.Errorf("创建 mihomo 工作目录失败: %w", err)
 	}
-	configPath := cfg.MihomoConfigPath
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		p.mu.Unlock()
 		return fmt.Errorf("mihomo 配置文件不存在: %s，请先在订阅页面应用订阅生成配置", configPath)
 	}
 
 	output := newCappedBuffer(processOutputLimit)
-	cmd := exec.Command(binary, "-d", mihomoDir)
+	cmd := exec.Command(binary, "-d", mihomoHome, "-f", configPath)
 	cmd.Stdout = output
 	cmd.Stderr = output
 	// 独立进程组：停止时向整个进程组发信号，
