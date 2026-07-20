@@ -3,3 +3,7 @@ go = "1.26.1"
 
 [tasks.install]
 run = "make linux && sudo ./build/linux/mihomo-tui install_service"
+
+[tasks.fmt]
+description = "格式化项目中的全部 Go 源码"
+run = "gofmt -w $(find . -type f -name '*.go' -not -path './vendor/*')"
