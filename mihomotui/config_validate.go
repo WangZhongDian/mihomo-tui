@@ -125,6 +125,12 @@ func (c *Config) Validate() error {
 		if strings.TrimSpace(s.URL) == "" {
 			add("订阅 %q 链接不能为空", s.Name)
 		}
+		if strategy := s.FetchProxyStrategy; strategy != "" && strategy != SubscriptionFetchDirect && strategy != SubscriptionFetchLocalMihomo && strategy != SubscriptionFetchSystem {
+			add("订阅 %q 拉取网络策略非法: %q（可选 direct/local_mihomo/system）", s.Name, strategy)
+		}
+		if len(s.UserAgent) > 512 {
+			add("订阅 %q User-Agent 过长", s.Name)
+		}
 	}
 	if c.ActiveSubscription < -1 || c.ActiveSubscription >= len(c.Subscriptions) {
 		add("活动订阅索引 %d 越界（订阅数 %d，合法范围 -1 ~ %d）",

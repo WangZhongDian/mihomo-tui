@@ -63,8 +63,16 @@ type mihomoProxiesResponse struct {
 
 // mihomoProxyProvider 是 /providers/proxies 返回的单个 provider。
 // mihomo v1.19.28 起，provider 内的节点不再包含在 /proxies 响应中。
+type mihomoSubscriptionInfo struct {
+	Upload   int64 `json:"upload"`
+	Download int64 `json:"download"`
+	Total    int64 `json:"total"`
+	Expire   int64 `json:"expire"`
+}
+
 type mihomoProxyProvider struct {
-	Proxies []mihomoProxy `json:"proxies"`
+	Proxies          []mihomoProxy           `json:"proxies"`
+	SubscriptionInfo *mihomoSubscriptionInfo `json:"subscriptionInfo"`
 }
 
 type mihomoProxyProvidersResponse struct {

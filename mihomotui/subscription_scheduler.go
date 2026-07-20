@@ -53,6 +53,9 @@ func (d *Daemon) refreshDueSubscriptionPools() {
 				continue
 			}
 			due := true
+			if sub.ProfileUpdateInterval > 0 { // profile-update-interval is defined in hours by Clash/Mihomo providers.
+				interval = sub.ProfileUpdateInterval * 3600
+			}
 			if sub.LastCheckedAt != "" {
 				if t, err := time.Parse(TimeFormatShort, sub.LastCheckedAt); err == nil {
 					due = now.Sub(t) >= time.Duration(interval)*time.Second
@@ -65,4 +68,5 @@ func (d *Daemon) refreshDueSubscriptionPools() {
 			}
 		}
 	}
+	d.syncSubscriptionMetadataFromProviders()
 }

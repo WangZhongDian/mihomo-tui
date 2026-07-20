@@ -26,9 +26,11 @@ type ConfigUpdateResponse struct {
 // SubscriptionImportRequest 导入订阅请求
 // SubscriptionUpdateRequest 修改订阅显示名称、远程地址和本地代理拉取策略。
 type SubscriptionUpdateRequest struct {
-	Name          string `json:"name"`
-	URL           string `json:"url,omitempty"`
-	UseLocalProxy bool   `json:"use_local_proxy,omitempty"`
+	Name               string                         `json:"name"`
+	URL                string                         `json:"url,omitempty"`
+	UseLocalProxy      bool                           `json:"use_local_proxy,omitempty"` // 历史兼容：等价于 local_mihomo
+	UserAgent          string                         `json:"user_agent,omitempty"`
+	FetchProxyStrategy SubscriptionFetchProxyStrategy `json:"fetch_proxy_strategy,omitempty"`
 }
 
 type SubscriptionImportRequest struct {

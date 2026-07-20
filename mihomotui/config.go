@@ -87,22 +87,41 @@ type SubscriptionPool struct {
 }
 
 // SubscriptionMeta 保存订阅来源元数据；订阅正文只存在 CacheFile 指向的私有缓存中。
+// SubscriptionFetchProxyStrategy controls how remote subscription requests are routed.
+type SubscriptionFetchProxyStrategy string
+
+const (
+	SubscriptionFetchDirect      SubscriptionFetchProxyStrategy = "direct"
+	SubscriptionFetchLocalMihomo SubscriptionFetchProxyStrategy = "local_mihomo"
+	SubscriptionFetchSystem      SubscriptionFetchProxyStrategy = "system"
+)
+
 type SubscriptionMeta struct {
-	ID            string             `yaml:"id"`
-	Name          string             `yaml:"name"`
-	URL           string             `yaml:"url"`
-	UpdatedAt     string             `yaml:"updated_at"`
-	LastSuccessAt string             `yaml:"last_success_at"`
-	LastFailureAt string             `yaml:"last_failure_at,omitempty"`
-	LastError     string             `yaml:"last_error,omitempty"`
-	UsedGB        float64            `yaml:"used_gb"`
-	TotalGB       float64            `yaml:"total_gb"`
-	SourceType    SubscriptionSource `yaml:"source_type,omitempty"`
-	CacheFile     string             `yaml:"cache_file,omitempty"`
-	ContentSHA256 string             `yaml:"content_sha256,omitempty"`
-	FailureCount  int                `yaml:"failure_count,omitempty"`
-	LastCheckedAt string             `yaml:"last_checked_at,omitempty"`
-	UseLocalProxy bool               `yaml:"use_local_proxy,omitempty"`
+	ID                    string                         `yaml:"id"`
+	Name                  string                         `yaml:"name"`
+	URL                   string                         `yaml:"url"`
+	UpdatedAt             string                         `yaml:"updated_at"`
+	LastSuccessAt         string                         `yaml:"last_success_at"`
+	LastFailureAt         string                         `yaml:"last_failure_at,omitempty"`
+	LastError             string                         `yaml:"last_error,omitempty"`
+	UsedGB                float64                        `yaml:"used_gb"`
+	TotalGB               float64                        `yaml:"total_gb"` // 兼容旧配置/旧客户端展示
+	UploadBytes           int64                          `yaml:"upload_bytes,omitempty"`
+	DownloadBytes         int64                          `yaml:"download_bytes,omitempty"`
+	TotalBytes            int64                          `yaml:"total_bytes,omitempty"`
+	RemainingBytes        int64                          `yaml:"remaining_bytes,omitempty"`
+	ExpireAt              string                         `yaml:"expire_at,omitempty"`
+	MetadataAvailable     bool                           `yaml:"metadata_available"`
+	MetadataStatus        string                         `yaml:"metadata_status,omitempty"`
+	ProfileUpdateInterval int                            `yaml:"profile_update_interval,omitempty"`
+	UserAgent             string                         `yaml:"user_agent,omitempty"`
+	FetchProxyStrategy    SubscriptionFetchProxyStrategy `yaml:"fetch_proxy_strategy,omitempty"`
+	SourceType            SubscriptionSource             `yaml:"source_type,omitempty"`
+	CacheFile             string                         `yaml:"cache_file,omitempty"`
+	ContentSHA256         string                         `yaml:"content_sha256,omitempty"`
+	FailureCount          int                            `yaml:"failure_count,omitempty"`
+	LastCheckedAt         string                         `yaml:"last_checked_at,omitempty"`
+	UseLocalProxy         bool                           `yaml:"use_local_proxy,omitempty"`
 }
 
 // RuleProviderSubscription 规则订阅元数据

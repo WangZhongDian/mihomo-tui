@@ -7,7 +7,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -18,10 +20,23 @@ const maxSubscriptionDownloadSize int64 = 20 << 20 // 20 MiB
 var subscriptionHTTPClient = &http.Client{Timeout: DefaultIPCRequestTimeout}
 
 type subscriptionFetchResult struct {
-	UsedGB  float64
-	TotalGB float64
-	Content []byte
+	UsedGB                float64
+	TotalGB               float64
+	UploadBytes           int64
+	DownloadBytes         int64
+	TotalBytes            int64
+	RemainingBytes        int64
+	ExpireAt              string
+	MetadataAvailable     bool
+	MetadataStatus        string
+	ProfileUpdateInterval int
+	Content               []byte
 }
+
+// Many airport endpoints intentionally expose subscription-userinfo only to
+// Clash-compatible clients. Keep a broadly accepted default while allowing a
+// per-subscription override in the editor.
+const defaultSubscriptionUserAgent = "mihomo-tui/1.0 clash"
 
 func (d *Daemon) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -75,6 +90,10 @@ func (d *Daemon) importSubscription(requestedName, rawURL string) error {
 
 // importSubscriptionContent 统一处理 URL、文件和粘贴内容；正文绝不进入配置或 IPC 响应。
 func (d *Daemon) importSubscriptionContent(requestedName, source string, sourceType SubscriptionSource, content []byte, result subscriptionFetchResult, useLocalProxy bool) error {
+	// 文件/粘贴导入不会经过 HTTP fetch；URL 导入也可能只有部分响应头元数据。
+	// 因而统一合并正文 URI 节点备注，且不覆盖响应头中更精确的字节计数。
+	result = mergeSubscriptionMetadata(result, parseSubscriptionMetadataFromContent(content))
+	result.Content = content
 	var name string
 	var shouldApply bool
 	_, err := UpdateGlobalConfig(func(cfg *Config) error {
@@ -102,7 +121,8 @@ func (d *Daemon) importSubscriptionContent(requestedName, source string, sourceT
 			return cacheErr
 		}
 		now := timestampNow()
-		meta := SubscriptionMeta{ID: id, Name: name, URL: source, SourceType: sourceType, CacheFile: cache, ContentSHA256: digest, UpdatedAt: now, LastSuccessAt: now, LastCheckedAt: now, UsedGB: result.UsedGB, TotalGB: result.TotalGB, UseLocalProxy: useLocalProxy}
+		meta := SubscriptionMeta{ID: id, Name: name, URL: source, SourceType: sourceType, CacheFile: cache, ContentSHA256: digest, UpdatedAt: now, LastSuccessAt: now, LastCheckedAt: now, UseLocalProxy: useLocalProxy}
+		applySubscriptionFetchMetadata(&meta, result)
 		if idx >= 0 {
 			cfg.Subscriptions[idx] = meta
 		} else {
@@ -172,7 +192,7 @@ func (d *Daemon) refreshSubscription(identifier string) error {
 	if normalizedSource(sub.SourceType) != SubscriptionSourceURL || strings.TrimSpace(sub.URL) == "" {
 		return fmt.Errorf("订阅 %q 不是可刷新的远程 URL", sub.Name)
 	}
-	result, fetchErr := fetchSubscriptionWithProxy(sub.URL, sub.UseLocalProxy)
+	result, fetchErr := fetchSubscriptionWithOptions(sub.URL, subscriptionFetchOptions{sub.UseLocalProxy, sub.FetchProxyStrategy, sub.UserAgent})
 	var active bool
 	_, err := UpdateGlobalConfig(func(next *Config) error {
 		i := next.FindSubscriptionByID(sub.ID)
@@ -200,7 +220,7 @@ func (d *Daemon) refreshSubscription(identifier string) error {
 		item.LastFailureAt = ""
 		item.FailureCount = 0
 		item.UsedGB = result.UsedGB
-		item.TotalGB = result.TotalGB
+		applySubscriptionFetchMetadata(item, result)
 		for _, pool := range next.SubscriptionPools {
 			if pool.ActiveMemberID == item.ID && pool.Enabled {
 				active = true
@@ -221,6 +241,108 @@ func (d *Daemon) refreshSubscription(identifier string) error {
 		}
 	}
 	return nil
+}
+
+// backfillSubscriptionMetadataFromCaches upgrades subscriptions imported before
+// content-level metadata parsing existed. It only fills entries without valid
+// metadata and never changes subscription text or refresh timestamps.
+func (d *Daemon) backfillSubscriptionMetadataFromCaches() {
+	cfg := GlobalConfig()
+	type candidate struct{ id, cache string }
+	var items []candidate
+	for _, sub := range cfg.Subscriptions {
+		if sub.CacheFile != "" && (sub.RemainingBytes == 0 && sub.UploadBytes == 0 && sub.DownloadBytes == 0 && sub.TotalBytes == 0 || (sub.ExpireAt != "" && normalizeSubscriptionExpiry(sub.ExpireAt) != sub.ExpireAt)) {
+			items = append(items, candidate{sub.ID, sub.CacheFile})
+		}
+	}
+	if len(items) == 0 {
+		return
+	}
+	parsed := make(map[string]subscriptionFetchResult, len(items))
+	for _, item := range items {
+		content, err := os.ReadFile(item.cache)
+		if err != nil {
+			continue
+		}
+		if result := parseSubscriptionMetadataFromContent(content); result.MetadataAvailable {
+			parsed[item.id] = result
+		}
+	}
+	if len(parsed) == 0 {
+		return
+	}
+	if _, err := UpdateGlobalConfig(func(next *Config) error {
+		for id, result := range parsed {
+			if i := next.FindSubscriptionByID(id); i >= 0 {
+				item := &next.Subscriptions[i]
+				merged := mergeSubscriptionMetadata(subscriptionFetchResult{UploadBytes: item.UploadBytes, DownloadBytes: item.DownloadBytes, TotalBytes: item.TotalBytes, RemainingBytes: item.RemainingBytes, UsedGB: item.UsedGB, TotalGB: item.TotalGB, ExpireAt: item.ExpireAt, MetadataAvailable: item.MetadataAvailable, MetadataStatus: item.MetadataStatus}, result)
+				applySubscriptionFetchMetadata(item, merged)
+			}
+		}
+		return nil
+	}); err != nil {
+		Warnf("回填订阅正文额度元数据失败: %v", err)
+	}
+}
+
+// syncSubscriptionMetadataFromProviders obtains quota metadata from the running
+// mihomo provider API. Some providers expose it there even when HTTP download
+// headers were stripped by a CDN.
+func (d *Daemon) syncSubscriptionMetadataFromProviders() {
+	if d.mihomoProcess == nil || !d.mihomoProcess.IsRunning() || d.mihomoAPI == nil {
+		return
+	}
+	data, err := d.mihomoAPI.GetProxyProviders()
+	if err != nil {
+		Debugf("读取运行中 provider 订阅元数据失败: %s", RedactURLInText(err.Error()))
+		return
+	}
+	providers, err := parseProxyProviders(data)
+	if err != nil {
+		Debugf("解析运行中 provider 订阅元数据失败: %s", err)
+		return
+	}
+	cfg := GlobalConfig()
+	active, err := cfg.activePoolSubscriptions()
+	if err != nil {
+		return
+	}
+	changed := false
+	_, err = UpdateGlobalConfig(func(next *Config) error {
+		for i, sub := range active {
+			provider, ok := providers[fmt.Sprintf("provider%d", i+1)]
+			if !ok || provider.SubscriptionInfo == nil {
+				continue
+			}
+			info := provider.SubscriptionInfo
+			if info.Total <= 0 && info.Upload <= 0 && info.Download <= 0 && info.Expire <= 0 {
+				continue
+			}
+			idx := next.FindSubscriptionByID(sub.ID)
+			if idx < 0 {
+				continue
+			}
+			item := &next.Subscriptions[idx]
+			result := subscriptionFetchResult{UploadBytes: info.Upload, DownloadBytes: info.Download, TotalBytes: info.Total, MetadataAvailable: true, MetadataStatus: "已从运行中的 mihomo provider 同步"}
+			if info.Expire > 0 {
+				result.ExpireAt = time.Unix(info.Expire, 0).Local().Format(TimeFormatShort)
+			}
+			result.UsedGB = float64(info.Upload+info.Download) / (1024 * 1024 * 1024)
+			result.TotalGB = float64(info.Total) / (1024 * 1024 * 1024)
+			if item.UploadBytes != result.UploadBytes || item.DownloadBytes != result.DownloadBytes || item.TotalBytes != result.TotalBytes || item.ExpireAt != result.ExpireAt || !item.MetadataAvailable {
+				applySubscriptionFetchMetadata(item, result)
+				changed = true
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		Debugf("保存运行中 provider 订阅元数据失败: %s", err)
+		return
+	}
+	if changed {
+		Debugf("已同步运行中 mihomo provider 的订阅额度元数据")
+	}
 }
 
 // failoverSubscription 在当前活动源连续失败时，按集合顺序选择拥有有效缓存的备用源。
@@ -308,6 +430,11 @@ func (d *Daemon) handleSubscriptionDetail(w http.ResponseWriter, r *http.Request
 				}
 				item.URL = strings.TrimSpace(req.URL)
 				item.UseLocalProxy = req.UseLocalProxy
+				item.UserAgent = strings.TrimSpace(req.UserAgent)
+				item.FetchProxyStrategy = req.FetchProxyStrategy
+				if item.FetchProxyStrategy == "" && item.UseLocalProxy {
+					item.FetchProxyStrategy = SubscriptionFetchLocalMihomo
+				}
 			} else if strings.TrimSpace(req.URL) != "" {
 				return fmt.Errorf("本地文件或粘贴订阅不能修改为远程链接，请重新导入")
 			}
@@ -394,11 +521,22 @@ func hasUsableProxySubscription(cfg *Config) bool {
 }
 
 func fetchSubscription(rawURL string) (subscriptionFetchResult, error) {
-	return fetchSubscriptionWithProxy(rawURL, false)
+	return fetchSubscriptionWithOptions(rawURL, subscriptionFetchOptions{})
 }
 
 // fetchSubscriptionWithProxy 可通过当前 mihomo HTTP 代理拉取受限订阅；代理不可用时返回错误，旧缓存不会被覆盖。
 func fetchSubscriptionWithProxy(rawURL string, useLocalProxy bool) (subscriptionFetchResult, error) {
+	return fetchSubscriptionWithOptions(rawURL, subscriptionFetchOptions{UseLocalProxy: useLocalProxy})
+}
+
+type subscriptionFetchOptions struct {
+	UseLocalProxy bool
+	Strategy      SubscriptionFetchProxyStrategy
+	UserAgent     string
+}
+
+func fetchSubscriptionWithOptions(rawURL string, options subscriptionFetchOptions) (subscriptionFetchResult, error) {
+	useLocalProxy := options.UseLocalProxy || options.Strategy == SubscriptionFetchLocalMihomo
 	parsed, err := validateSubscriptionURL(rawURL)
 	if err != nil {
 		return subscriptionFetchResult{}, err
@@ -409,7 +547,17 @@ func fetchSubscriptionWithProxy(rawURL string, useLocalProxy bool) (subscription
 	if err != nil {
 		return subscriptionFetchResult{}, fmt.Errorf("构造订阅请求失败: %w", err)
 	}
+	userAgent := strings.TrimSpace(options.UserAgent)
+	if userAgent == "" {
+		userAgent = defaultSubscriptionUserAgent
+	}
+	req.Header.Set("User-Agent", userAgent)
 	client := subscriptionHTTPClient
+	if options.Strategy == SubscriptionFetchSystem {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = http.ProxyFromEnvironment
+		client = &http.Client{Timeout: DefaultIPCRequestTimeout, Transport: transport}
+	}
 	if useLocalProxy {
 		cfg := GlobalConfig()
 		proxyURL, perr := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", cfg.Mihomo.HTTPPort))
@@ -439,7 +587,10 @@ func fetchSubscriptionWithProxy(rawURL string, useLocalProxy bool) (subscription
 	if err := validateSubscriptionContent(content); err != nil {
 		return subscriptionFetchResult{}, err
 	}
-	result := parseSubscriptionUserInfo(resp.Header.Get("subscription-userinfo"))
+	result := parseSubscriptionMetadataHeaders(resp.Header)
+	// 部分机场只在响应头提供 expire，而把剩余额度放在 URI 备注中；
+	// 必须合并两处元数据，不能因为有效期已解析就跳过正文扫描。
+	result = mergeSubscriptionMetadata(result, parseSubscriptionMetadataFromContent(content))
 	result.Content = content
 	return result, nil
 }
@@ -490,24 +641,199 @@ func validateSubscriptionURL(rawURL string) (*url.URL, error) {
 }
 
 func parseSubscriptionUserInfo(raw string) subscriptionFetchResult {
-	var result subscriptionFetchResult
+	result := subscriptionFetchResult{}
 	for _, item := range strings.Split(raw, ";") {
 		key, value, ok := strings.Cut(strings.TrimSpace(item), "=")
 		if !ok {
 			continue
 		}
-		n, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
-		if err != nil {
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "upload":
+			if n, ok := parseSubscriptionByteValue(value); ok {
+				result.UploadBytes = n
+			}
+		case "download":
+			if n, ok := parseSubscriptionByteValue(value); ok {
+				result.DownloadBytes = n
+			}
+		case "total":
+			if n, ok := parseSubscriptionByteValue(value); ok {
+				result.TotalBytes = n
+			}
+		case "expire":
+			if n, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64); err == nil && n > 0 {
+				result.ExpireAt = time.Unix(n, 0).Local().Format(TimeFormatShort)
+			}
+		}
+	}
+	result.UsedGB = float64(result.UploadBytes+result.DownloadBytes) / (1024 * 1024 * 1024)
+	result.TotalGB = float64(result.TotalBytes) / (1024 * 1024 * 1024)
+	result.MetadataAvailable = result.TotalBytes > 0 || result.UploadBytes > 0 || result.DownloadBytes > 0 || result.ExpireAt != ""
+	return result
+}
+
+func parseSubscriptionByteValue(raw string) (int64, bool) {
+	value := strings.TrimSpace(strings.ToLower(raw))
+	match := regexp.MustCompile(`^([0-9]+(?:\.[0-9]+)?)\s*(tib|gib|mib|kib|tb|gb|mb|kb|b)?$`).FindStringSubmatch(value)
+	if len(match) != 3 {
+		return 0, false
+	}
+	n, err := strconv.ParseFloat(match[1], 64)
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	if match[2] == "" {
+		return int64(n), true
+	} // 标准 subscription-userinfo 的单位始终是 bytes.
+	return int64(n * subscriptionUnitBytes(match[2])), true
+}
+
+// mergeSubscriptionMetadata preserves byte-accurate header/provider values and
+// fills absent fields from URI node remarks.
+func mergeSubscriptionMetadata(primary, fallback subscriptionFetchResult) subscriptionFetchResult {
+	if primary.UploadBytes == 0 && primary.DownloadBytes == 0 && primary.TotalBytes == 0 {
+		primary.UploadBytes, primary.DownloadBytes, primary.TotalBytes = fallback.UploadBytes, fallback.DownloadBytes, fallback.TotalBytes
+		primary.UsedGB, primary.TotalGB = fallback.UsedGB, fallback.TotalGB
+	}
+	if primary.RemainingBytes == 0 {
+		primary.RemainingBytes = fallback.RemainingBytes
+	}
+	if primary.ExpireAt == "" {
+		primary.ExpireAt = fallback.ExpireAt
+	}
+	if primary.ProfileUpdateInterval == 0 {
+		primary.ProfileUpdateInterval = fallback.ProfileUpdateInterval
+	}
+	if primary.RemainingBytes > 0 || primary.UploadBytes > 0 || primary.DownloadBytes > 0 || primary.TotalBytes > 0 || primary.ExpireAt != "" {
+		primary.MetadataAvailable = true
+		if fallback.RemainingBytes > 0 && primary.TotalBytes == 0 {
+			primary.MetadataStatus = fallback.MetadataStatus
+		} else if primary.MetadataStatus == "" {
+			primary.MetadataStatus = fallback.MetadataStatus
+		}
+	}
+	if primary.MetadataStatus == "" {
+		primary.MetadataStatus = "无法解析有效的订阅元数据"
+	}
+	return primary
+}
+
+// parseSubscriptionMetadataHeaders supports CDN forwarding variants such as
+// x-amz-meta-subscription-userinfo and x-obs-meta-subscription-userinfo.
+func parseSubscriptionMetadataHeaders(headers http.Header) subscriptionFetchResult {
+	for key, values := range headers {
+		canonical := strings.ToLower(strings.TrimSpace(key))
+		if canonical != "subscription-userinfo" && (!strings.HasSuffix(canonical, "-subscription-userinfo") || !strings.Contains(canonical, "-")) {
 			continue
 		}
-		switch strings.ToLower(key) {
-		case "upload", "download":
-			result.UsedGB += n / (1024 * 1024 * 1024)
-		case "total":
-			result.TotalGB = n / (1024 * 1024 * 1024)
+		if len(values) == 0 {
+			continue
+		}
+		result := parseSubscriptionUserInfo(values[0])
+		if result.MetadataAvailable {
+			result.MetadataStatus = "已解析订阅流量元数据"
+		}
+		if raw := headers.Get("profile-update-interval"); raw != "" {
+			if n, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil && n > 0 {
+				result.ProfileUpdateInterval = n
+			}
+		}
+		if result.MetadataAvailable {
+			return result
+		}
+	}
+	return subscriptionFetchResult{MetadataStatus: "无法解析有效的订阅元数据"}
+}
+
+var subscriptionRemainingPattern = regexp.MustCompile(`(?i)(?:剩余(?:流量|额度)?|remaining(?:\s*(?:traffic|data))?)\s*[:：]?\s*([0-9]+(?:\.[0-9]+)?)\s*(tib|gib|mib|kib|tb|gb|mb|kb|b)\b`)
+var subscriptionExpirePattern = regexp.MustCompile(`(?i)(?:套餐到期|到期时间|有效期|expire(?:s|d)?|expiration)\s*[:：]?\s*([^#\r\n]+)`)
+
+// parseSubscriptionMetadataFromContent handles providers that encode quota in
+// URI node remarks rather than HTTP headers. It accepts decoded URI lists and
+// their Base64 form; only metadata is retained, never the subscription text.
+func parseSubscriptionMetadataFromContent(content []byte) subscriptionFetchResult {
+	text := string(content)
+	compact := strings.Map(func(r rune) rune {
+		if r == '\r' || r == '\n' || r == ' ' || r == '\t' {
+			return -1
+		}
+		return r
+	}, text)
+	if decoded, err := base64.StdEncoding.DecodeString(compact); err == nil && len(decoded) > 0 {
+		text = string(decoded)
+	}
+	result := subscriptionFetchResult{MetadataStatus: "无法解析有效的订阅元数据"}
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		remark := line
+		if u, err := url.Parse(line); err == nil && u.Fragment != "" {
+			remark = u.Fragment
+			if decoded, err := url.QueryUnescape(remark); err == nil {
+				remark = decoded
+			}
+		}
+		if match := subscriptionRemainingPattern.FindStringSubmatch(remark); len(match) == 3 {
+			if amount, err := strconv.ParseFloat(match[1], 64); err == nil && amount >= 0 {
+				result.RemainingBytes = int64(amount * subscriptionUnitBytes(match[2]))
+				result.MetadataAvailable = true
+				result.MetadataStatus = "已从订阅节点备注解析额度"
+			}
+		}
+		if match := subscriptionExpirePattern.FindStringSubmatch(remark); len(match) == 2 {
+			if value := normalizeSubscriptionExpiry(match[1]); value != "" {
+				result.ExpireAt = value
+				result.MetadataAvailable = true
+				result.MetadataStatus = "已从订阅节点备注解析额度"
+			}
 		}
 	}
 	return result
+}
+
+// normalizeSubscriptionExpiry prevents node-description text after an expiry
+// label from leaking into the UI. URI remarks frequently concatenate an expiry
+// note with a long node-filter description.
+func normalizeSubscriptionExpiry(raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return ""
+	}
+	lower := strings.ToLower(value)
+	if strings.Contains(value, "长期有效") {
+		return "长期有效"
+	}
+	if strings.Contains(value, "永久") || strings.Contains(lower, "permanent") || strings.Contains(lower, "never") {
+		return "长期有效"
+	}
+	if match := regexp.MustCompile(`\d{4}[-/]\d{1,2}[-/]\d{1,2}`).FindString(value); match != "" {
+		return match
+	}
+	return ""
+}
+
+func subscriptionUnitBytes(unit string) float64 {
+	switch strings.ToLower(unit) {
+	case "tb", "tib":
+		return 1024 * 1024 * 1024 * 1024
+	case "gb", "gib":
+		return 1024 * 1024 * 1024
+	case "mb", "mib":
+		return 1024 * 1024
+	case "kb", "kib":
+		return 1024
+	default:
+		return 1
+	}
+}
+
+func applySubscriptionFetchMetadata(item *SubscriptionMeta, result subscriptionFetchResult) {
+	item.UploadBytes, item.DownloadBytes, item.TotalBytes, item.RemainingBytes = result.UploadBytes, result.DownloadBytes, result.TotalBytes, result.RemainingBytes
+	item.UsedGB, item.TotalGB = result.UsedGB, result.TotalGB
+	item.ExpireAt, item.MetadataAvailable, item.MetadataStatus = normalizeSubscriptionExpiry(result.ExpireAt), result.MetadataAvailable, result.MetadataStatus
+	item.ProfileUpdateInterval = result.ProfileUpdateInterval
 }
 
 func findSubscriptionByURL(cfg *Config, rawURL string) int {

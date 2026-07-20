@@ -30,15 +30,30 @@ func buildSubCardText() string {
 		percent = sub.UsedGB / sub.TotalGB * 100
 	}
 	bar := ProgressBar(mihomotui.ProgressBarWidth, percent)
+	percentText := "—"
+	if sub.TotalGB > 0 {
+		percentText = fmt.Sprintf("%.0f%%", percent)
+	}
+	quota := "[yellow]无法解析有效的订阅元数据[-]"
+	if sub.MetadataAvailable {
+		if sub.RemainingBytes > 0 && sub.TotalBytes == 0 {
+			quota = fmt.Sprintf("剩余: %.2fGB", float64(sub.RemainingBytes)/(1024*1024*1024))
+		} else {
+			quota = fmt.Sprintf("%.2fGB / %.2fGB", sub.UsedGB, sub.TotalGB)
+		}
+		if sub.ExpireAt != "" {
+			quota += "  到期: " + sub.ExpireAt
+		}
+	}
 	return fmt.Sprintf(
 		"[%s]  %s[-:-:-]  [订阅]\n\n"+
 			" 来源: %s\n"+
 			" 更新: %s\n"+
-			" 流量: %.2fGB / %.2fGB\n\n"+
-			" %.0f%%\n"+
+			" 流量: %s\n\n"+
+			" %s\n"+
 			" %s────────────────────",
 		mihomotui.ColorHeader, sub.Name, mihomotui.RedactURL(sub.URL), sub.UpdatedAt,
-		sub.UsedGB, sub.TotalGB, percent, bar,
+		quota, percentText, bar,
 	)
 }
 

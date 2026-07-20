@@ -12,19 +12,28 @@ import (
 
 // Subscription 订阅数据模型
 type Subscription struct {
-	ID            string
-	Name          string
-	URL           string
-	UpdatedAt     string
-	LastSuccessAt string
-	LastFailureAt string
-	LastError     string
-	UsedGB        float64
-	TotalGB       float64
-	FailureCount  int
-	CacheFile     string
-	SourceType    mihomotui.SubscriptionSource
-	UseLocalProxy bool
+	ID                 string
+	Name               string
+	URL                string
+	UpdatedAt          string
+	LastSuccessAt      string
+	LastFailureAt      string
+	LastError          string
+	UsedGB             float64
+	TotalGB            float64
+	UploadBytes        int64
+	DownloadBytes      int64
+	TotalBytes         int64
+	RemainingBytes     int64
+	ExpireAt           string
+	MetadataAvailable  bool
+	MetadataStatus     string
+	FailureCount       int
+	CacheFile          string
+	SourceType         mihomotui.SubscriptionSource
+	UseLocalProxy      bool
+	UserAgent          string
+	FetchProxyStrategy mihomotui.SubscriptionFetchProxyStrategy
 }
 
 // NewSubscriptionPage 创建订阅页面
@@ -46,10 +55,12 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 				LastError:     meta.LastError,
 				UsedGB:        meta.UsedGB,
 				TotalGB:       meta.TotalGB,
+				UploadBytes:   meta.UploadBytes, DownloadBytes: meta.DownloadBytes, TotalBytes: meta.TotalBytes,
+				ExpireAt: meta.ExpireAt, MetadataAvailable: meta.MetadataAvailable, MetadataStatus: meta.MetadataStatus,
 				FailureCount:  meta.FailureCount,
 				CacheFile:     meta.CacheFile,
 				SourceType:    meta.SourceType,
-				UseLocalProxy: meta.UseLocalProxy,
+				UseLocalProxy: meta.UseLocalProxy, UserAgent: meta.UserAgent, FetchProxyStrategy: meta.FetchProxyStrategy,
 			})
 		}
 	}
@@ -232,14 +243,24 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 		form := tview.NewForm().SetButtonsAlign(tview.AlignRight)
 		nameField := tview.NewInputField().SetLabel("名称: ").SetText(sub.Name)
 		urlField := tview.NewInputField().SetLabel("订阅链接: ").SetText(sub.URL)
-		viaProxy := tview.NewCheckbox().SetLabel("通过本地 mihomo 代理拉取").SetChecked(sub.UseLocalProxy)
+		strategyLabels := []string{"直连", "本地 mihomo 代理", "系统代理"}
+		strategyValues := []mihomotui.SubscriptionFetchProxyStrategy{mihomotui.SubscriptionFetchDirect, mihomotui.SubscriptionFetchLocalMihomo, mihomotui.SubscriptionFetchSystem}
+		selectedStrategy := 0
+		for i, value := range strategyValues {
+			if sub.FetchProxyStrategy == value || (sub.FetchProxyStrategy == "" && sub.UseLocalProxy && value == mihomotui.SubscriptionFetchLocalMihomo) {
+				selectedStrategy = i
+			}
+		}
+		strategyField := tview.NewDropDown().SetLabel("拉取网络: ").SetOptions(strategyLabels, nil).SetCurrentOption(selectedStrategy)
+		userAgentField := tview.NewInputField().SetLabel("User-Agent: ").SetText(sub.UserAgent)
 		// 对文件/粘贴导入，正文不可从 IPC 读回；只允许改名称，避免误以为能编辑缓存正文。
 		isRemote := sub.SourceType == "" || sub.SourceType == mihomotui.SubscriptionSourceURL
 		if !isRemote {
 			urlField.SetDisabled(true)
-			viaProxy.SetDisabled(true)
+			strategyField.SetDisabled(true)
+			userAgentField.SetDisabled(true)
 		}
-		form.AddFormItem(nameField).AddFormItem(urlField).AddFormItem(viaProxy)
+		form.AddFormItem(nameField).AddFormItem(urlField).AddFormItem(strategyField).AddFormItem(userAgentField)
 		close := func() { pages.RemovePage("subscription-editor"); app.SetFocus(pages); app.SetFocus(inputField) }
 		save := tview.NewButton(" 保存 ")
 		cancel := tview.NewButton(" 取消 ").SetSelectedFunc(close)
@@ -253,10 +274,12 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 				showModal("保存失败", "远程订阅链接必须以 http:// 或 https:// 开头")
 				return
 			}
+			strategyIndex, _ := strategyField.GetCurrentOption()
+			strategy := strategyValues[strategyIndex]
 			go func() {
 				client, err := mihomotui.GetIPCClient()
 				if err == nil {
-					err = client.IPCUpdateSubscription(sub.ID, mihomotui.SubscriptionUpdateRequest{Name: name, URL: rawURL, UseLocalProxy: viaProxy.IsChecked()})
+					err = client.IPCUpdateSubscription(sub.ID, mihomotui.SubscriptionUpdateRequest{Name: name, URL: rawURL, UseLocalProxy: strategy == mihomotui.SubscriptionFetchLocalMihomo, FetchProxyStrategy: strategy, UserAgent: strings.TrimSpace(userAgentField.GetText())})
 				}
 				if err != nil {
 					app.QueueUpdateDraw(func() { showModal("保存失败", err.Error()); app.SetFocus(nameField) })
@@ -320,8 +343,10 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 
 			// 计算进度条
 			percent := 0.0
+			percentText := "—"
 			if sub.TotalGB > 0 {
 				percent = sub.UsedGB / sub.TotalGB * 100
+				percentText = fmt.Sprintf("%.0f%%", percent)
 			}
 			progressWidth := 20
 			filled := min(int(percent/100*float64(progressWidth)), progressWidth)
@@ -338,11 +363,22 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 			if sub.LastError != "" {
 				statusText = fmt.Sprintf("[red]刷新失败: %s[-]", mihomotui.RedactURLInText(sub.LastError))
 			}
+			quotaText := "[yellow]无法解析有效的订阅元数据[-]"
+			if sub.MetadataAvailable {
+				if sub.RemainingBytes > 0 && sub.TotalBytes == 0 {
+					quotaText = fmt.Sprintf("剩余: %.2fGB", float64(sub.RemainingBytes)/(1024*1024*1024))
+				} else {
+					quotaText = fmt.Sprintf("%.2fGB / %.2fGB", sub.UsedGB, sub.TotalGB)
+				}
+				if sub.ExpireAt != "" {
+					quotaText += "  到期: " + sub.ExpireAt
+				}
+			}
 			infoText := fmt.Sprintf(
-				"[blue::b] %s[-:-:-]    %.2fGB / %.2fGB\n"+
-					" 来源: %s    更新: %s    %.0f%%\n"+
+				"[blue::b] %s[-:-:-]    %s\n"+
+					" 来源: %s    更新: %s    %s\n"+
 					" [%s]%s[-]  %s",
-				sub.Name, sub.UsedGB, sub.TotalGB, mihomotui.RedactURL(sub.URL), sub.UpdatedAt, percent, mihomotui.ColorInfo, bar, statusText,
+				sub.Name, quotaText, mihomotui.RedactURL(sub.URL), sub.UpdatedAt, percentText, mihomotui.ColorInfo, bar, statusText,
 			)
 			info := tview.NewTextView().SetText(infoText).SetDynamicColors(true)
 
@@ -673,6 +709,27 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 	})
 
 	refreshCards()
+
+	// 每次进入订阅页都从 daemon 回读，确保后台从运行中 provider 同步的额度
+	// 不会一直停留在 TUI 启动时的旧快照。
+	pages.SetFocusFunc(func() {
+		go func() {
+			client, err := mihomotui.GetIPCClient()
+			if err != nil {
+				return
+			}
+			latest, err := client.IPCGetConfig()
+			if err != nil || latest == nil {
+				return
+			}
+			app.QueueUpdateDraw(func() {
+				cfg = latest
+				mihomotui.SyncConfigFromServer(latest)
+				reloadSubs()
+				refreshCards()
+			})
+		}()
+	})
 
 	pages.AddPage("main", page, true, true)
 	return pages

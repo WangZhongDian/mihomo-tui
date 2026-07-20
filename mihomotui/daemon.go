@@ -93,6 +93,7 @@ func (d *Daemon) Run() error {
 	// 初始化 mihomo 进程管理器
 	d.mihomoProcess = NewMihomoProcess()
 	MigrateLegacyMihomoBinary()
+	d.backfillSubscriptionMetadataFromCaches()
 	d.startSubscriptionScheduler()
 
 	// 初始化 IPC 授权器，并以最小权限创建 socket 目录。root daemon 只允许
