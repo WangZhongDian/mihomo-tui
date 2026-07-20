@@ -1,14 +1,17 @@
 # mihomo-tui
 
-mihomo-tui is a terminal UI configuration tool for [mihomo](https://github.com/MetaCubeX/mihomo) (Clash Meta). Built with [rivo/tview](https://github.com/rivo/tview), it is designed for Linux headless server environments and provides an intuitive keyboard-driven interface for managing proxy configurations.
+mihomo-tui is a terminal UI and daemon management tool for [mihomo](https://github.com/MetaCubeX/mihomo) (Clash Meta). Built with [rivo/tview](https://github.com/rivo/tview), it targets headless Linux servers: the TUI communicates with an IPC daemon to manage the mihomo process, subscriptions, rules, kernel versions, and networking safely.
 
 [中文文档](README.zh.md)
 
 ## Features
 
 - **Proxy Management** — Visual node list with latency sorting, multi-select speed testing, and automatic best-node selection
-- **Subscription Management** — Add, remove, and update subscriptions with automatic download and config merging
-- **Rule Management** — View active rules and support custom rule configuration
+- **Subscription Pools & Active Takeover** — Import from URL, local file, pasted content, or stdin; the daemon validates and caches subscriptions, preserves the last working version, and supports offline bootstrap
+- **Highly Available Subscription Pools** — Ordered failover and merge modes with active-source, cache, health, failure-count, and switch-reason visibility
+- **Subscription Usage Metadata** — Parses common `subscription-userinfo` and CDN-prefixed headers, expiry data, and runtime provider metadata
+- **Rule Management** — View active rules; enable, disable, edit, reorder, and restore built-in rules; place custom rules before or after built-ins
+- **Kernel & Resource Management** — Cached Release list with multi-version download, switch, delete, and progress display; configurable GeoIP / GeoSite download URLs
 - **Connection Monitoring** — Real-time active connections, traffic statistics, and connection details
 - **Latency Testing** — Batch node latency tests with visual result sorting
 - **System Proxy** — One-click toggle for system proxy (HTTP/SOCKS5)
@@ -21,9 +24,9 @@ mihomo-tui is a terminal UI configuration tool for [mihomo](https://github.com/M
 
 ## Screenshots
 
-| Proxy Page | Rules Page |
-|:----------:|:----------:|
-| ![Proxy Page](docs/proxy.png) | ![Rules Page](docs/rules.png) |
+| Proxy Page | Rules Page | Resource Management |
+|:----------:|:----------:|:-------------------:|
+| ![Proxy Page](docs/proxy.png) | ![Rules Page](docs/rules.png) | ![Resource Management](docs/mihomo_manager.png) |
 
 ## System Requirements
 
