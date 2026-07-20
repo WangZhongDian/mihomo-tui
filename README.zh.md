@@ -69,20 +69,43 @@ mihomo-tui
 
 ### 命令行选项
 
-```
-mihomo-tui — mihomo 终端 UI 配置工具
+```text
+mihomo-tui — mihomo 终端 UI 与守护进程管理工具
 
 用法:
-  mihomo-tui [选项]              启动 TUI 客户端
-  mihomo-tui server [选项]       启动后台 IPC 服务
-  mihomo-tui install_service     安装为 systemd 服务（需 root）
-  mihomo-tui uninstall           卸载 systemd 服务（需 root）
-  mihomo-tui version             显示版本信息
+  mihomo-tui [选项]                              启动 TUI 客户端
+  mihomo-tui server [-d <目录>]                  启动后台 IPC 服务
+  mihomo-tui subscription import <导入选项>      导入并由 daemon 主动接管订阅
+  mihomo-tui install_service                     安装为 systemd 服务（需 root）
+  mihomo-tui uninstall                           卸载 systemd 服务（需 root）
+  mihomo-tui grant_operator <用户名>             授予普通用户 IPC 管理权限（需 root）
+  mihomo-tui cleanup                             清理系统代理和 TUN 环境（需 root）
+  mihomo-tui tun_diagnose                        输出 TUN 路由 dry-run 计划（不修改系统）
+  mihomo-tui version                             显示版本信息
+  mihomo-tui help                                显示帮助
 
-选项:
-  -d string    指定配置目录
-  -standalone  启动嵌入式服务端（一体模式）
+全局选项（放在子命令前）:
+  -d <目录>          指定配置目录
+  -standalone         启动嵌入式 IPC 服务（一体模式；仅 TUI）
+
+subscription import 导入选项（必须且只能选择一种来源）:
+  --url <URL>         导入远程订阅 URL
+  --file <路径>       读取本地订阅文件并导入内容
+  --stdin             从标准输入读取订阅内容
+  --name <名称>       可选的订阅显示名称
+  --via-local-proxy   后续刷新远程 URL 时通过本地 mihomo HTTP 代理
 ```
+
+示例：
+
+```bash
+mihomo-tui --standalone
+mihomo-tui subscription import --url 'https://example.com/sub?token=***' --name 我的订阅
+mihomo-tui subscription import --file ./subscription.yaml
+cat subscription.txt | mihomo-tui subscription import --stdin --name 离线订阅
+sudo mihomo-tui grant_operator <用户名>
+```
+
 
 ### 常用命令
 

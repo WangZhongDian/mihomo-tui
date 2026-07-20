@@ -69,20 +69,43 @@ mihomo-tui
 
 ### Command Line Options
 
-```
-mihomo-tui — mihomo Terminal UI Configuration Tool
+```text
+mihomo-tui — mihomo terminal UI and daemon manager
 
 Usage:
-  mihomo-tui [options]              Start the TUI client
-  mihomo-tui server [options]       Start the background IPC service
-  mihomo-tui install_service        Install as a systemd service (requires root)
-  mihomo-tui uninstall              Uninstall the systemd service (requires root)
-  mihomo-tui version                Show version information
+  mihomo-tui [options]                           Start the TUI client
+  mihomo-tui server [-d <directory>]             Start the background IPC service
+  mihomo-tui subscription import <import option> Import a subscription for daemon takeover
+  mihomo-tui install_service                     Install the systemd service (root required)
+  mihomo-tui uninstall                           Uninstall the systemd service (root required)
+  mihomo-tui grant_operator <user>               Grant a regular user IPC management access (root required)
+  mihomo-tui cleanup                             Clean system-proxy and TUN environment (root required)
+  mihomo-tui tun_diagnose                        Print a TUN routing dry-run plan; makes no changes
+  mihomo-tui version                             Show version information
+  mihomo-tui help                                Show help
 
-Options:
-  -d string    Specify the configuration directory
-  -standalone  Start the embedded server (standalone mode)
+Global options (place before a subcommand):
+  -d <directory>       Specify the configuration directory
+  -standalone          Start an embedded IPC daemon (TUI only)
+
+subscription import options (exactly one source is required):
+  --url <URL>          Import a remote subscription URL
+  --file <path>        Read and import a local subscription file
+  --stdin              Read subscription content from standard input
+  --name <name>        Optional subscription display name
+  --via-local-proxy    Refresh a remote URL through the local mihomo HTTP proxy
 ```
+
+Examples:
+
+```bash
+mihomo-tui --standalone
+mihomo-tui subscription import --url 'https://example.com/sub?token=***' --name my-subscription
+mihomo-tui subscription import --file ./subscription.yaml
+cat subscription.txt | mihomo-tui subscription import --stdin --name offline-subscription
+sudo mihomo-tui grant_operator <user>
+```
+
 
 ### Common Commands
 
