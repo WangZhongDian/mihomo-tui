@@ -13,33 +13,90 @@ import (
 	"mihomotui/mihomotui"
 )
 
-// buildSubCardText 从 globalConfig 构建订阅卡片文本
+// buildSubCardText displays the pools currently exposed to the running mihomo configuration.
 func buildSubCardText() string {
 	cfg := mihomotui.GlobalConfig()
-	if len(cfg.Subscriptions) == 0 {
-		return "[" + mihomotui.ColorMuted + "] 暂无订阅\n\n 请前往订阅页面导入[-]"
+	if len(cfg.SubscriptionPools) == 0 {
+		return "[" + mihomotui.ColorMuted + "]暂无运行订阅池\n\n请前往订阅池页面创建或迁移订阅[-]"
 	}
-	var sub mihomotui.SubscriptionMeta
-	if cfg.ActiveSubscription >= 0 && cfg.ActiveSubscription < len(cfg.Subscriptions) {
-		sub = cfg.Subscriptions[cfg.ActiveSubscription]
-	} else {
-		sub = cfg.Subscriptions[0]
+	byID := make(map[string]mihomotui.SubscriptionMeta, len(cfg.Subscriptions))
+	for _, sub := range cfg.Subscriptions {
+		byID[sub.ID] = sub
 	}
-	percent := 0.0
+	var lines []string
+	for _, pool := range cfg.SubscriptionPools {
+		if !pool.Enabled {
+			continue
+		}
+		mode := "主备"
+		if pool.Mode == mihomotui.SubscriptionPoolModeMerge {
+			mode = "合并"
+		}
+		state := "[green]●[-]"
+		if pool.Degraded {
+			state = "[yellow]▲[-]"
+		}
+		lines = append(lines, fmt.Sprintf("%s [::b]%s[-]  (%s)", state, pool.Name, mode))
+		available := 0
+		for _, id := range pool.Members {
+			if sub, ok := byID[id]; ok && sub.CacheFile != "" {
+				available++
+			}
+		}
+		if pool.Mode == mihomotui.SubscriptionPoolModeMerge {
+			lines = append(lines, fmt.Sprintf("  已合并 %d / %d 个可用订阅源", available, len(pool.Members)))
+		} else if _, ok := byID[pool.ActiveMemberID]; !ok {
+			lines = append(lines, "  [yellow]当前活动源缺失[-]")
+		}
+		// 在池摘要下逐行展示成员，方便从首页直接确认参与运行的订阅源健康和额度。
+		for _, id := range pool.Members {
+			sub, ok := byID[id]
+			if !ok {
+				continue
+			}
+			status := "[green]正常[-]"
+			if sub.CacheFile == "" || sub.FailureCount > 0 {
+				status = "[red]异常[-]"
+			}
+			current := ""
+			if pool.Mode != mihomotui.SubscriptionPoolModeMerge && id == pool.ActiveMemberID {
+				current = " [::b](当前)[-]"
+			}
+			line := fmt.Sprintf("  • %s%s · %s", sub.Name, current, status)
+			if remaining := subscriptionRemainingText(sub); remaining != "" {
+				line += " · 剩余 " + remaining
+			}
+			lines = append(lines, line)
+		}
+		if pool.Degraded && pool.LastSwitchReason != "" {
+			lines = append(lines, "  降级: "+pool.LastSwitchReason)
+		}
+	}
+	if len(lines) == 0 {
+		return "[" + mihomotui.ColorMuted + "]暂无已启用订阅池\n\n请前往订阅池页面启用订阅池[-]"
+	}
+	return strings.Join(lines, "\n")
+}
+
+func subscriptionRemainingText(sub mihomotui.SubscriptionMeta) string {
+	remaining := sub.RemainingBytes
+	if remaining <= 0 && sub.TotalBytes > 0 {
+		remaining = sub.TotalBytes - sub.UploadBytes - sub.DownloadBytes
+	}
+	if remaining <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%.2fGB", float64(remaining)/(1024*1024*1024))
+}
+
+func subscriptionQuotaText(sub mihomotui.SubscriptionMeta) string {
+	if sub.RemainingBytes > 0 && sub.TotalBytes == 0 {
+		return fmt.Sprintf("剩余 %.2fGB", float64(sub.RemainingBytes)/(1024*1024*1024))
+	}
 	if sub.TotalGB > 0 {
-		percent = sub.UsedGB / sub.TotalGB * 100
+		return fmt.Sprintf("%.2fGB / %.2fGB", sub.UsedGB, sub.TotalGB)
 	}
-	bar := ProgressBar(mihomotui.ProgressBarWidth, percent)
-	return fmt.Sprintf(
-		"[%s]  %s[-:-:-]  [订阅]\n\n"+
-			" 来源: %s\n"+
-			" 更新: %s\n"+
-			" 流量: %.2fGB / %.2fGB\n\n"+
-			" %.0f%%\n"+
-			" %s────────────────────",
-		mihomotui.ColorHeader, sub.Name, sub.URL, sub.UpdatedAt,
-		sub.UsedGB, sub.TotalGB, percent, bar,
-	)
+	return "无法解析有效的订阅元数据"
 }
 
 // NewDashboard 创建首页仪表盘页面
@@ -51,7 +108,7 @@ func NewDashboard(app *tview.Application) (Page, func()) {
 		SetText(buildSubCardText()).
 		SetDynamicColors(true)
 	subCard.SetBorder(true).
-		SetTitle(" 订阅 ").
+		SetTitle(" 当前运行订阅池 ").
 		SetTitleAlign(tview.AlignLeft)
 
 	// 当前节点卡片（动态更新）
@@ -190,7 +247,7 @@ func NewDashboard(app *tview.Application) (Page, func()) {
 	netCard, refreshNetCard := newNetSettingsCard(app)
 
 	// 代理模式卡片（可交互）
-	modeCard, refreshModeCard := newProxyModeCard()
+	modeCard, refreshModeCard := newProxyModeCard(app)
 
 	// 流量统计卡片
 	statsCard := tview.NewTextView().
@@ -306,11 +363,13 @@ func NewDashboard(app *tview.Application) (Page, func()) {
 				return
 			case <-ticker.C:
 				updateNodeCard()
+				app.QueueUpdateDraw(func() { subCard.SetText(buildSubCardText()) })
 			}
 		}
 	}()
 
 	refresh := func() {
+		subCard.SetText(buildSubCardText())
 		refreshNetCard()
 		refreshModeCard()
 		updateNodeCard()
@@ -525,7 +584,8 @@ func newNetSettingsCard(app *tview.Application) (tview.Primitive, func()) {
 
 	update := func() {
 		cfg := mihomotui.GlobalConfig()
-		proxyEnabled := cfg.System.SystemProxy
+		// 系统代理开关是本用户偏好，读取本地客户端偏好而非 daemon 配置
+		proxyEnabled := mihomotui.GetSystemProxyPreference()
 		tunEnabled := cfg.System.TUN
 		if activeTab == 0 {
 			tabProxy.SetLabel(" ■ 系统代理 ")
@@ -587,25 +647,35 @@ func newNetSettingsCard(app *tview.Application) (tview.Primitive, func()) {
 	})
 
 	toggleBtn.SetSelectedFunc(func() {
-		cfg := mihomotui.GlobalConfig()
-		if activeTab == 0 {
-			cfg.System.SystemProxy = !cfg.System.SystemProxy
-			if err := cfg.SetSystemProxyEnv(cfg.System.SystemProxy); err != nil {
+		systemProxyTab := activeTab == 0
+		if systemProxyTab {
+			// 系统代理是当前 TUI 用户的本地偏好：写本用户环境变量 + 本地偏好文件，
+			// 不写入 daemon 全局配置，避免多用户共享 daemon 时互相覆盖。
+			enable := !mihomotui.GetSystemProxyPreference()
+			cfg := mihomotui.GlobalConfig()
+			if err := cfg.SetSystemProxyEnv(enable); err != nil {
 				mihomotui.Warnf("系统代理环境变量设置失败: %v", err)
-			}
-		} else {
-			cfg.System.TUN = !cfg.System.TUN
-		}
-		mihomotui.SetGlobalConfig(*cfg)
-		update()
-		go func() {
-			client, err := mihomotui.GetIPCClient()
-			if err != nil {
-				mihomotui.Warnf("网络设置同步失败: %v", err)
+				// 注入失败：不更新偏好，显示保持原状态，避免与实际不符
+				update()
 				return
 			}
-			if err := client.IPCUpdateConfig(cfg); err != nil {
+			if err := mihomotui.SetSystemProxyPreference(enable); err != nil {
+				mihomotui.Warnf("系统代理偏好保存失败: %v", err)
+			}
+			update()
+			return
+		}
+		current := mihomotui.GlobalConfig()
+		enable := !current.System.TUN
+		go func() {
+			// 基于服务端最新配置提交单字段变更，避免整份覆盖并发修改
+			if _, err := mihomotui.MutateServerConfig(func(cfg *mihomotui.Config) {
+				cfg.System.TUN = enable
+			}); err != nil {
 				mihomotui.Warnf("网络设置同步失败: %v", err)
+			}
+			if app != nil {
+				app.QueueUpdateDraw(update)
 			}
 		}()
 	})
@@ -632,7 +702,7 @@ func newNetSettingsCard(app *tview.Application) (tview.Primitive, func()) {
 }
 
 // newProxyModeCard 创建可交互的代理模式卡片
-func newProxyModeCard() (tview.Primitive, func()) {
+func newProxyModeCard(app *tview.Application) (tview.Primitive, func()) {
 	modes := []string{"规则", "全局", "直连"}
 	modeValues := []string{"rule", "global", "direct"}
 	descriptions := []string{
@@ -655,6 +725,9 @@ func newProxyModeCard() (tview.Primitive, func()) {
 	tabViews := make([]*tview.TextView, len(modes))
 	tabs := tview.NewFlex()
 
+	// refresh 在下方定义（从本地缓存恢复显示），点击回调失败时用于回滚显示
+	var refresh func()
+
 	update := func() {
 		for i, tv := range tabViews {
 			if i == activeMode {
@@ -673,21 +746,24 @@ func newProxyModeCard() (tview.Primitive, func()) {
 			SetTextAlign(tview.AlignCenter)
 		tv.SetMouseCapture(func(action tview.MouseAction, event *tcell.EventMouse) (tview.MouseAction, *tcell.EventMouse) {
 			if action == tview.MouseLeftClick {
+				mode := modeValues[idx]
+				if mode == mihomotui.GlobalConfig().ProxyMode {
+					return action, event // 模式未变化，不触发保存
+				}
 				activeMode = idx
 				update()
-				go func(mode string) {
-					cfg := mihomotui.GlobalConfig()
-					cfg.ProxyMode = mode
-					mihomotui.SetGlobalConfig(*cfg)
-					client, err := mihomotui.GetIPCClient()
-					if err != nil {
-						mihomotui.Warnf("切换代理模式失败: 无法获取 IPC 客户端: %v", err)
-						return
-					}
-					if err := client.IPCUpdateConfig(cfg); err != nil {
+				go func() {
+					// 基于服务端最新配置提交单字段变更，避免整份覆盖并发修改
+					if _, err := mihomotui.MutateServerConfig(func(cfg *mihomotui.Config) {
+						cfg.ProxyMode = mode
+					}); err != nil {
 						mihomotui.Warnf("切换代理模式失败: %v", err)
+						// 保存失败：从本地缓存恢复显示为当前生效模式
+						if app != nil {
+							app.QueueUpdateDraw(refresh)
+						}
 					}
-				}(modeValues[idx])
+				}()
 			}
 			return action, event
 		})
@@ -703,7 +779,7 @@ func newProxyModeCard() (tview.Primitive, func()) {
 	card.SetBorder(true).SetTitle(" 代理模式 ")
 	card.SetBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
 
-	refresh := func() {
+	refresh = func() {
 		cfg := mihomotui.GlobalConfig()
 		for i, v := range modeValues {
 			if cfg.ProxyMode == v {

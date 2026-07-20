@@ -4,23 +4,30 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
+	"reflect"
 	"sync"
 	"time"
 )
 
 // IPCClient IPC 客户端，通过 Unix Domain Socket 与服务端通讯
 type IPCClient struct {
-	client  *http.Client
-	baseURL string
+	client     *http.Client
+	baseURL    string
+	socketPath string
 }
 
 // NewIPCClient 创建 IPC 客户端
 func NewIPCClient() (*IPCClient, error) {
-	sock := socketPath()
+	sock, err := clientSocketPathWithError()
+	if err != nil {
+		return nil, err
+	}
 	client := &http.Client{
 		Timeout: DefaultIPCRequestTimeout,
 		Transport: &http.Transport{
@@ -30,8 +37,9 @@ func NewIPCClient() (*IPCClient, error) {
 		},
 	}
 	return &IPCClient{
-		client:  client,
-		baseURL: "http://daemon",
+		client:     client,
+		baseURL:    "http://daemon",
+		socketPath: sock,
 	}, nil
 }
 
@@ -74,7 +82,19 @@ func (c *IPCClient) request(method, path string, body []byte, query map[string]s
 		// 尝试解析服务端返回的 JSON 错误信息
 		var apiErr APIResponse
 		if err := json.Unmarshal(data, &apiErr); err == nil && apiErr.Error != "" {
+			switch resp.StatusCode {
+			case http.StatusForbidden:
+				return nil, fmt.Errorf("%w：%s", ErrIPCPermissionDenied, apiErr.Error)
+			case http.StatusConflict:
+				return nil, fmt.Errorf("%w：%s", ErrConfigConflict, apiErr.Error)
+			}
 			return nil, fmt.Errorf("%s", apiErr.Error)
+		}
+		if resp.StatusCode == http.StatusForbidden {
+			return nil, fmt.Errorf("%w: HTTP %d: %s", ErrIPCPermissionDenied, resp.StatusCode, string(data))
+		}
+		if resp.StatusCode == http.StatusConflict {
+			return nil, fmt.Errorf("%w: HTTP %d: %s", ErrConfigConflict, resp.StatusCode, string(data))
 		}
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(data))
 	}
@@ -105,7 +125,7 @@ func (c *IPCClient) streamRequest(method, path string, query map[string]string) 
 	client := &http.Client{
 		Transport: &http.Transport{
 			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
-				return net.Dial("unix", socketPath())
+				return net.Dial("unix", c.socketPath)
 			},
 		},
 	}
@@ -178,17 +198,108 @@ func (c *IPCClient) IPCGetConfig() (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("解析配置响应失败: %w", err)
 	}
+	credentials, err := c.IPCGetMihomoAPICredentials()
+	if err != nil {
+		return nil, fmt.Errorf("获取 mihomo API 凭据失败: %w", err)
+	}
+	if controller := credentials["external_controller"]; controller != "" {
+		cfgResp.Config.Mihomo.ExternalController = controller
+	}
+	cfgResp.Config.Mihomo.Secret = credentials["secret"]
 	return &cfgResp.Config, nil
 }
 
-// IPCUpdateConfig 更新服务端配置
-func (c *IPCClient) IPCUpdateConfig(cfg *Config) error {
+// IPCGetMihomoAPICredentials 获取受 IPC 授权保护的 mihomo API 最小连接凭据。
+func (c *IPCClient) IPCGetMihomoAPICredentials() (map[string]string, error) {
+	resp, err := c.requestJSON(http.MethodGet, "/api/v1/mihomo/api-credentials", nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return unmarshalData[map[string]string](resp)
+}
+
+// IPCUpdateConfig 更新服务端配置。
+// 返回服务端提交后的配置快照与运行时应用结果；
+// 版本冲突时返回以 ErrConfigConflict 包装的错误。
+func (c *IPCClient) IPCUpdateConfig(cfg *Config) (*ConfigUpdateResponse, error) {
 	body, err := json.Marshal(cfg)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	_, err = c.requestJSON(http.MethodPost, "/api/v1/config", body, nil)
-	return err
+	resp, err := c.requestJSON(http.MethodPost, "/api/v1/config", body, nil)
+	if err != nil {
+		return nil, err
+	}
+	result, err := unmarshalData[ConfigUpdateResponse](resp)
+	if err != nil {
+		return nil, fmt.Errorf("解析配置提交响应失败: %w", err)
+	}
+	return &result, nil
+}
+
+// SyncConfigFromServer 将服务端配置合并进本地缓存：
+// 服务端是配置权威来源，但本地路径字段（mihomo 配置/二进制路径、日志目录）
+// 属于各用户私有偏好，不随服务端覆盖；secret 为空（掩码响应）时保留本地值。
+func SyncConfigFromServer(serverCfg *Config) {
+	if serverCfg == nil {
+		return
+	}
+	local := GlobalConfig()
+	merged := serverCfg.Clone()
+	merged.MihomoConfigPath = local.MihomoConfigPath
+	merged.MihomoBinaryPath = local.MihomoBinaryPath
+	merged.LogDir = local.LogDir
+	if merged.Mihomo.Secret == "" {
+		merged.Mihomo.Secret = local.Mihomo.Secret
+	}
+	SetGlobalConfig(merged)
+}
+
+// MutateServerConfig 以"读取最新 → 修改 → 提交"的方式更新服务端配置：
+// 先从 daemon 获取最新配置（含当前版本号），应用 mutate 后提交；
+// 若提交时版本冲突（配置已被其他会话修改），自动重新获取并重试一次。
+// 成功后同步本地配置缓存（保留本地路径字段与 secret）。
+// 返回服务端的提交响应（含运行时应用结果）。
+func MutateServerConfig(mutate func(*Config)) (*ConfigUpdateResponse, error) {
+	if mutate == nil {
+		return nil, fmt.Errorf("配置修改函数不能为空")
+	}
+	client, err := GetIPCClient()
+	if err != nil {
+		return nil, err
+	}
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		cfg, err := client.IPCGetConfig()
+		if err != nil {
+			return nil, err
+		}
+		before := cfg.Clone()
+		mutate(cfg)
+		// 两侧均取 Clone 再比较：Clone 会把空切片归一化为 nil，
+		// 避免 JSON 反序列化产生的空非 nil 切片造成误判。
+		if after := cfg.Clone(); reflect.DeepEqual(before, after) {
+			// 修改未产生实际变化：跳过提交，避免无意义的版本递增、
+			// 运行时应用与并发冲突（例如页面构建期控件回调触发的重复保存，
+			// 或输入框失焦时值未改变的保存）。
+			masked := *cfg
+			masked.Mihomo.Secret = ""
+			SyncConfigFromServer(&masked)
+			Debugf("配置无实际变化，跳过提交")
+			return &ConfigUpdateResponse{Config: masked, Applied: true}, nil
+		}
+		resp, err := client.IPCUpdateConfig(cfg)
+		if err == nil {
+			SyncConfigFromServer(&resp.Config)
+			return resp, nil
+		}
+		if !errors.Is(err, ErrConfigConflict) {
+			return nil, err
+		}
+		lastErr = err
+		Infof("配置提交版本冲突，重新获取最新配置后重试（第 %d 次）", attempt+1)
+	}
+	return nil, lastErr
 }
 
 // ========== 订阅 ==========
@@ -202,9 +313,13 @@ func (c *IPCClient) IPCGetSubscriptions() ([]SubscriptionMeta, error) {
 	return unmarshalData[[]SubscriptionMeta](resp)
 }
 
-// IPCImportSubscription 导入订阅
-func (c *IPCClient) IPCImportSubscription(url string) error {
-	req := SubscriptionImportRequest{URL: url}
+// IPCImportSubscription 导入远端订阅。
+func (c *IPCClient) IPCImportSubscription(rawURL string) error {
+	return c.IPCImportSubscriptionWithRequest(SubscriptionImportRequest{URL: rawURL})
+}
+
+// IPCImportSubscriptionWithRequest 导入远端订阅或创建手动订阅。
+func (c *IPCClient) IPCImportSubscriptionWithRequest(req SubscriptionImportRequest) error {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return err
@@ -213,21 +328,31 @@ func (c *IPCClient) IPCImportSubscription(url string) error {
 	return err
 }
 
+// IPCUpdateSubscription 更新订阅元数据；本地内容仍保留原缓存，远程 URL 的正文将在下一次刷新时更新。
+func (c *IPCClient) IPCUpdateSubscription(id string, req SubscriptionUpdateRequest) error {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+	_, err = c.requestJSON(http.MethodPatch, "/api/v1/subscriptions/"+url.PathEscape(id), body, nil)
+	return err
+}
+
 // IPCRefreshSubscription 刷新订阅
 func (c *IPCClient) IPCRefreshSubscription(name string) error {
-	_, err := c.requestJSON(http.MethodPut, "/api/v1/subscriptions/"+name, nil, nil)
+	_, err := c.requestJSON(http.MethodPut, "/api/v1/subscriptions/"+url.PathEscape(name), nil, nil)
 	return err
 }
 
 // IPCDeleteSubscription 删除订阅
 func (c *IPCClient) IPCDeleteSubscription(name string) error {
-	_, err := c.requestJSON(http.MethodDelete, "/api/v1/subscriptions/"+name, nil, nil)
+	_, err := c.requestJSON(http.MethodDelete, "/api/v1/subscriptions/"+url.PathEscape(name), nil, nil)
 	return err
 }
 
 // IPCApplySubscription 应用订阅（生成 mihomo 配置）
 func (c *IPCClient) IPCApplySubscription(name string) error {
-	_, err := c.requestJSON(http.MethodPost, "/api/v1/subscriptions/"+name+"/apply", nil, nil)
+	_, err := c.requestJSON(http.MethodPost, "/api/v1/subscriptions/"+url.PathEscape(name)+"/apply", nil, nil)
 	return err
 }
 
@@ -243,13 +368,38 @@ func (c *IPCClient) IPCGetMihomoStatus() (*MihomoStatusResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("解析状态响应失败: %w", err)
 	}
+	// TUI 直接调用 mihomo REST API；状态查询同时同步 daemon 记录的实际
+	// 运行版本，确保长时间打开的客户端在服务端重启/换核后不会使用旧快照。
+	if result.Running && result.RunningVersion != "" {
+		local := GlobalConfig()
+		if local.MihomoRunningVersion != result.RunningVersion || local.MihomoRunningVersionAt != result.VersionAt {
+			local.MihomoRunningVersion = result.RunningVersion
+			local.MihomoRunningVersionAt = result.VersionAt
+			SetGlobalConfig(*local)
+		}
+	}
 	return &result, nil
+}
+
+// syncRuntimeConfig refreshes state changed by daemon-side runtime operations.
+// 守护进程启动/切换内核后会记录实际运行版本；TUI 直接请求 mihomo API，
+// 所以必须立刻同步该记录，不能继续使用启动前的本地配置快照。
+func (c *IPCClient) syncRuntimeConfig() {
+	cfg, err := c.IPCGetConfig()
+	if err != nil {
+		Warnf("运行时操作后同步服务端配置失败: %v", err)
+		return
+	}
+	SyncConfigFromServer(cfg)
 }
 
 // IPCStartMihomo 启动 mihomo
 func (c *IPCClient) IPCStartMihomo() error {
-	_, err := c.requestJSON(http.MethodPost, "/api/v1/mihomo/start", nil, nil)
-	return err
+	if _, err := c.requestJSON(http.MethodPost, "/api/v1/mihomo/start", nil, nil); err != nil {
+		return err
+	}
+	c.syncRuntimeConfig()
+	return nil
 }
 
 // IPCStopMihomo 停止 mihomo
@@ -260,8 +410,11 @@ func (c *IPCClient) IPCStopMihomo() error {
 
 // IPCRestartMihomo 重启 mihomo
 func (c *IPCClient) IPCRestartMihomo() error {
-	_, err := c.requestJSON(http.MethodPost, "/api/v1/mihomo/restart", nil, nil)
-	return err
+	if _, err := c.requestJSON(http.MethodPost, "/api/v1/mihomo/restart", nil, nil); err != nil {
+		return err
+	}
+	c.syncRuntimeConfig()
+	return nil
 }
 
 // IPCUpgradeMihomo 更新 mihomo（传入空字符串则自动获取最新版本）
@@ -357,28 +510,42 @@ func (c *IPCClient) IPCGetConfigDir() (string, error) {
 	return result["config_dir"], nil
 }
 
-// IPCCheckDaemon 检查守护进程是否运行
-func IPCCheckDaemon() bool {
+// IPCProbeDaemon 检查守护进程并保留连接失败原因，避免把权限不足误报为服务未运行。
+func IPCProbeDaemon() error {
 	client, err := NewIPCClient()
 	if err != nil {
-		return false
+		return err
 	}
 	resp, err := client.do(http.MethodGet, "/api/v1/ping", nil, nil)
 	if err != nil {
-		return false
+		return err
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("IPC 服务返回异常状态: %s", resp.Status)
+	}
+	return nil
 }
 
-// IPCWaitForDaemon 等待守护进程就绪，超时返回错误
+// IPCCheckDaemon 检查守护进程是否运行
+func IPCCheckDaemon() bool {
+	return IPCProbeDaemon() == nil
+}
+
+// IPCWaitForDaemon 等待守护进程就绪，超时返回最后一次连接错误。
 func IPCWaitForDaemon(timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
+	var lastErr error
 	for time.Now().Before(deadline) {
-		if IPCCheckDaemon() {
+		if err := IPCProbeDaemon(); err == nil {
 			return nil
+		} else {
+			lastErr = err
 		}
 		time.Sleep(DefaultStreamInterval)
+	}
+	if lastErr != nil {
+		return fmt.Errorf("等待守护进程超时（%v），最后错误: %w", timeout, lastErr)
 	}
 	return fmt.Errorf("等待守护进程超时（%v）", timeout)
 }
@@ -406,12 +573,98 @@ func (c *IPCClient) IPCImportRuleProvider(req RuleProviderImportRequest) error {
 
 // IPCRefreshRuleProvider 刷新规则订阅
 func (c *IPCClient) IPCRefreshRuleProvider(name string) error {
-	_, err := c.requestJSON(http.MethodPut, "/api/v1/rule-providers/"+name, nil, nil)
+	_, err := c.requestJSON(http.MethodPut, "/api/v1/rule-providers/"+url.PathEscape(name), nil, nil)
 	return err
 }
 
 // IPCDeleteRuleProvider 删除规则订阅
 func (c *IPCClient) IPCDeleteRuleProvider(name string) error {
-	_, err := c.requestJSON(http.MethodDelete, "/api/v1/rule-providers/"+name, nil, nil)
+	_, err := c.requestJSON(http.MethodDelete, "/api/v1/rule-providers/"+url.PathEscape(name), nil, nil)
+	return err
+}
+
+// IPCGetSubscriptionPools 获取订阅池及其脱敏健康状态。
+func (c *IPCClient) IPCGetSubscriptionPools() ([]SubscriptionPool, error) {
+	resp, err := c.requestJSON(http.MethodGet, "/api/v1/subscription-pools", nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return unmarshalData[[]SubscriptionPool](resp)
+}
+
+// IPCImportSubscriptionContent 导入文件或粘贴正文；正文只在请求中传输。
+func (c *IPCClient) IPCImportSubscriptionContent(name, source string, sourceType SubscriptionSource, content string, useProxy bool) error {
+	return c.IPCImportSubscriptionWithRequest(SubscriptionImportRequest{Name: name, URL: source, SourceType: sourceType, Content: content, UseLocalProxy: useProxy})
+}
+
+// IPCCreateSubscriptionPool 创建顺序主备订阅池。
+func (c *IPCClient) IPCCreateSubscriptionPool(req SubscriptionPoolRequest) (string, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.requestJSON(http.MethodPost, "/api/v1/subscription-pools", body, nil)
+	if err != nil {
+		return "", err
+	}
+	result, err := unmarshalData[map[string]string](resp)
+	return result["id"], err
+}
+
+// IPCUpdateSubscriptionPool 更新成员顺序、活动源和刷新策略。
+func (c *IPCClient) IPCUpdateSubscriptionPool(id string, req SubscriptionPoolRequest) error {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+	_, err = c.requestJSON(http.MethodPut, "/api/v1/subscription-pools/"+url.PathEscape(id), body, nil)
+	return err
+}
+
+// IPCDeleteSubscriptionPool 删除订阅池，不删除其中缓存的订阅源。
+func (c *IPCClient) IPCDeleteSubscriptionPool(id string) error {
+	_, err := c.requestJSON(http.MethodDelete, "/api/v1/subscription-pools/"+url.PathEscape(id), nil, nil)
+	return err
+}
+
+// IPCRefreshSubscriptionPool 立即刷新订阅池全部远程成员。
+func (c *IPCClient) IPCRefreshSubscriptionPool(id string) error {
+	_, err := c.requestJSON(http.MethodPost, "/api/v1/subscription-pools/"+url.PathEscape(id)+"/refresh", nil, nil)
+	return err
+}
+
+// IPCGetMihomoVersions returns cached releases and local download state.
+func (c *IPCClient) IPCGetMihomoVersions() (*MihomoVersionsResponse, error) {
+	resp, err := c.requestJSON(http.MethodGet, "/api/v1/mihomo/versions", nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	result, err := unmarshalData[MihomoVersionsResponse](resp)
+	if err != nil {
+		return nil, fmt.Errorf("解析内核版本列表失败: %w", err)
+	}
+	return &result, nil
+}
+func (c *IPCClient) IPCRefreshMihomoVersions() ([]MihomoVersionInfo, error) {
+	resp, err := c.requestJSON(http.MethodPost, "/api/v1/mihomo/versions/refresh", nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return unmarshalData[[]MihomoVersionInfo](resp)
+}
+func (c *IPCClient) IPCDownloadMihomoVersion(version string) error {
+	_, err := c.requestJSON(http.MethodPost, "/api/v1/mihomo/versions/"+url.PathEscape(version), nil, map[string]string{"action": "download"})
+	return err
+}
+func (c *IPCClient) IPCActivateMihomoVersion(version string) error {
+	if _, err := c.requestJSON(http.MethodPost, "/api/v1/mihomo/versions/"+url.PathEscape(version), nil, map[string]string{"action": "activate"}); err != nil {
+		return err
+	}
+	// 激活运行中内核会触发受控重启；同步其实际运行版本供 API 兼容层使用。
+	c.syncRuntimeConfig()
+	return nil
+}
+func (c *IPCClient) IPCDeleteMihomoVersion(version string) error {
+	_, err := c.requestJSON(http.MethodDelete, "/api/v1/mihomo/versions/"+url.PathEscape(version), nil, nil)
 	return err
 }

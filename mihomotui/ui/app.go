@@ -30,15 +30,17 @@ func Run(standalone bool) error {
 		os.Exit(1)
 	}
 
-	app := tview.NewApplication().EnableMouse(true)
+	app := tview.NewApplication().EnableMouse(true).EnablePaste(true)
 
 	// 先创建所有页面，用于后续键盘导航判断
 	homePage, _ := NewDashboard(app)
 	proxyPage := NewProxyPage(app)
 	subPage := NewSubscriptionPage(app)
+	poolPage := NewSubscriptionPoolPage(app)
 	connPage := NewConnectionsPage(app)
 	rulesPage := NewRulesPage(app)
 	logsPage := NewLogsPage(app)
+	resourcePage := NewResourcePage(app)
 	settingsPage := NewSettingsPage(app)
 
 	// 页面管理器
@@ -49,20 +51,24 @@ func Run(standalone bool) error {
 	pages.AddPage("home", homePage, true, true)
 	pages.AddPage("proxy", proxyPage, true, false)
 	pages.AddPage("subscription", subPage, true, false)
+	pages.AddPage("subscription-pools", poolPage, true, false)
 	pages.AddPage("connections", connPage, true, false)
 	pages.AddPage("rules", rulesPage, true, false)
 	pages.AddPage("logs", logsPage, true, false)
+	pages.AddPage("resources", resourcePage, true, false)
 	pages.AddPage("settings", settingsPage, true, false)
 
 	// 页面映射，用于生命周期管理
 	pageMap := map[string]tview.Primitive{
-		"home":         homePage,
-		"proxy":        proxyPage,
-		"subscription": subPage,
-		"connections":  connPage,
-		"rules":        rulesPage,
-		"logs":         logsPage,
-		"settings":     settingsPage,
+		"home":               homePage,
+		"proxy":              proxyPage,
+		"subscription":       subPage,
+		"subscription-pools": poolPage,
+		"connections":        connPage,
+		"rules":              rulesPage,
+		"logs":               logsPage,
+		"resources":          resourcePage,
+		"settings":           settingsPage,
 	}
 	var currentPage string
 
@@ -85,9 +91,11 @@ func Run(standalone bool) error {
 		AddItem(" 首页", "", 0, switchPage("home")).
 		AddItem(" 代理", "", 0, switchPage("proxy")).
 		AddItem(" 订阅", "", 0, switchPage("subscription")).
+		AddItem(" 订阅池", "", 0, switchPage("subscription-pools")).
 		AddItem(" 连接", "", 0, switchPage("connections")).
 		AddItem(" 规则", "", 0, switchPage("rules")).
 		AddItem(" 日志", "", 0, switchPage("logs")).
+		AddItem(" 资源管理", "", 0, switchPage("resources")).
 		AddItem(" 设置", "", 0, switchPage("settings"))
 	navList.SetBorder(true).
 		SetTitle(" 菜单 ").
@@ -169,10 +177,12 @@ func syncConfig() error {
 // ensureDaemon 确保 IPC 守护进程已启动
 // standalone 为 true 时，若服务端未运行则自动启动嵌入式服务端
 func ensureDaemon(standalone bool) error {
-	// 检查服务端是否已运行
-	if mihomotui.IPCCheckDaemon() {
+	// 检查服务端是否已运行；权限不足必须直接提示，不能误报为服务未运行。
+	if err := mihomotui.IPCProbeDaemon(); err == nil {
 		fmt.Println("[mihomo-tui] 已连接到独立服务端（分体模式）")
 		return nil
+	} else if mihomotui.IsIPCPermissionError(err) {
+		return err
 	}
 
 	if !standalone {

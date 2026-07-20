@@ -1,14 +1,17 @@
 # mihomo-tui
 
-mihomo-tui is a terminal UI configuration tool for [mihomo](https://github.com/MetaCubeX/mihomo) (Clash Meta). Built with [rivo/tview](https://github.com/rivo/tview), it is designed for Linux headless server environments and provides an intuitive keyboard-driven interface for managing proxy configurations.
+mihomo-tui is a terminal UI and daemon management tool for [mihomo](https://github.com/MetaCubeX/mihomo) (Clash Meta). Built with [rivo/tview](https://github.com/rivo/tview), it targets headless Linux servers: the TUI communicates with an IPC daemon to manage the mihomo process, subscriptions, rules, kernel versions, and networking safely.
 
 [中文文档](README.zh.md)
 
 ## Features
 
 - **Proxy Management** — Visual node list with latency sorting, multi-select speed testing, and automatic best-node selection
-- **Subscription Management** — Add, remove, and update subscriptions with automatic download and config merging
-- **Rule Management** — View active rules and support custom rule configuration
+- **Subscription Pools & Active Takeover** — Import from URL, local file, pasted content, or stdin; the daemon validates and caches subscriptions, preserves the last working version, and supports offline bootstrap
+- **Highly Available Subscription Pools** — Ordered failover and merge modes with active-source, cache, health, failure-count, and switch-reason visibility
+- **Subscription Usage Metadata** — Parses common `subscription-userinfo` and CDN-prefixed headers, expiry data, and runtime provider metadata
+- **Rule Management** — View active rules; enable, disable, edit, reorder, and restore built-in rules; place custom rules before or after built-ins
+- **Kernel & Resource Management** — Cached Release list with multi-version download, switch, delete, and progress display; configurable GeoIP / GeoSite download URLs
 - **Connection Monitoring** — Real-time active connections, traffic statistics, and connection details
 - **Latency Testing** — Batch node latency tests with visual result sorting
 - **System Proxy** — One-click toggle for system proxy (HTTP/SOCKS5)
@@ -21,9 +24,9 @@ mihomo-tui is a terminal UI configuration tool for [mihomo](https://github.com/M
 
 ## Screenshots
 
-| Proxy Page | Rules Page |
-|:----------:|:----------:|
-| ![Proxy Page](docs/proxy.png) | ![Rules Page](docs/rules.png) |
+| Proxy Page | Rules Page | Resource Management |
+|:----------:|:----------:|:-------------------:|
+| ![Proxy Page](docs/proxy.png) | ![Rules Page](docs/rules.png) | ![Resource Management](docs/mihomo_manager.png) |
 
 ## System Requirements
 
@@ -66,20 +69,43 @@ mihomo-tui
 
 ### Command Line Options
 
-```
-mihomo-tui — mihomo Terminal UI Configuration Tool
+```text
+mihomo-tui — mihomo terminal UI and daemon manager
 
 Usage:
-  mihomo-tui [options]              Start the TUI client
-  mihomo-tui server [options]       Start the background IPC service
-  mihomo-tui install_service        Install as a systemd service (requires root)
-  mihomo-tui uninstall              Uninstall the systemd service (requires root)
-  mihomo-tui version                Show version information
+  mihomo-tui [options]                           Start the TUI client
+  mihomo-tui server [-d <directory>]             Start the background IPC service
+  mihomo-tui subscription import <import option> Import a subscription for daemon takeover
+  mihomo-tui install_service                     Install the systemd service (root required)
+  mihomo-tui uninstall                           Uninstall the systemd service (root required)
+  mihomo-tui grant_operator <user>               Grant a regular user IPC management access (root required)
+  mihomo-tui cleanup                             Clean system-proxy and TUN environment (root required)
+  mihomo-tui tun_diagnose                        Print a TUN routing dry-run plan; makes no changes
+  mihomo-tui version                             Show version information
+  mihomo-tui help                                Show help
 
-Options:
-  -d string    Specify the configuration directory
-  -standalone  Start the embedded server (standalone mode)
+Global options (place before a subcommand):
+  -d <directory>       Specify the configuration directory
+  -standalone          Start an embedded IPC daemon (TUI only)
+
+subscription import options (exactly one source is required):
+  --url <URL>          Import a remote subscription URL
+  --file <path>        Read and import a local subscription file
+  --stdin              Read subscription content from standard input
+  --name <name>        Optional subscription display name
+  --via-local-proxy    Refresh a remote URL through the local mihomo HTTP proxy
 ```
+
+Examples:
+
+```bash
+mihomo-tui --standalone
+mihomo-tui subscription import --url 'https://example.com/sub?token=***' --name my-subscription
+mihomo-tui subscription import --file ./subscription.yaml
+cat subscription.txt | mihomo-tui subscription import --stdin --name offline-subscription
+sudo mihomo-tui grant_operator <user>
+```
+
 
 ### Common Commands
 

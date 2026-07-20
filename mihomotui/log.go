@@ -46,9 +46,13 @@ func (w *logWriter) rotate(date string) error {
 		w.file.Close()
 	}
 	logPath := filepath.Join(w.dir, fmt.Sprintf("mihomo-tui-%s.log", date))
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		return err
+	}
+	if err := os.Chmod(logPath, 0600); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("收紧日志文件权限失败: %w", err)
 	}
 	w.file = f
 	w.date = date
@@ -77,10 +81,10 @@ func InitLogger(dir, level string) error {
 		dir = filepath.Join(GetConfigDir(), "logs")
 	}
 	// 如果指定目录不可写，回退到默认目录
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		fallback := filepath.Join(GetConfigDir(), "logs")
 		if fallback != dir {
-			if err2 := os.MkdirAll(fallback, 0755); err2 == nil {
+			if err2 := os.MkdirAll(fallback, 0700); err2 == nil {
 				dir = fallback
 			} else {
 				return fmt.Errorf("创建日志目录失败: %w", err)
@@ -88,6 +92,10 @@ func InitLogger(dir, level string) error {
 		} else {
 			return fmt.Errorf("创建日志目录失败: %w", err)
 		}
+	}
+
+	if err := os.Chmod(dir, 0700); err != nil {
+		return fmt.Errorf("设置日志目录权限失败: %w", err)
 	}
 
 	// 关闭旧日志文件

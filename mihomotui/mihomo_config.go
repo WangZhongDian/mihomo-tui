@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -39,7 +38,8 @@ type providerOverrideYAML struct {
 
 // proxyProviderYAML proxy-provider 配置
 type proxyProviderYAML struct {
-	URL         string               `yaml:"url"`
+	URL         string               `yaml:"url,omitempty"`
+	Path        string               `yaml:"path,omitempty"`
 	Type        string               `yaml:"type"`
 	Interval    int                  `yaml:"interval"`
 	HealthCheck healthCheckYAML      `yaml:"health-check"`
@@ -271,44 +271,54 @@ var builtInRulesProviders = map[string]ruleProviderYAML{
 	},
 }
 
-// ensureSecret 确保 API Secret 已设置（如为空则生成并持久化）
+// ensureSecret 确保 API Secret 已设置（如为空则生成）。
+// 仅修改内存；持久化由配置提交层（UpdateGlobalConfig / ReplaceGlobalConfig）负责。
 func (c *Config) ensureSecret() error {
 	if c.Mihomo.Secret == "" {
 		c.Mihomo.Secret = generateRandomSecret()
-		if err := c.Flush(); err != nil {
-			return fmt.Errorf("保存 secret 失败: %w", err)
-		}
 	}
 	return nil
 }
 
 // buildProxyConfig 构建代理相关配置（proxy-providers、proxies、proxy-groups）
 func (c *Config) buildProxyConfig() (map[string]proxyProviderYAML, []proxyYAML, []proxyGroupYAML, error) {
-	if len(c.Subscriptions) == 0 {
-		return nil, nil, nil, fmt.Errorf("没有订阅，请先导入订阅")
+	// provider 正文由 daemon 主动拉取并写入私有缓存，mihomo 仅读取本地文件。
+	activeSubscriptions, err := c.activePoolSubscriptions()
+	legacyRemote := false
+	if err != nil {
+		// 仅供尚未被 daemon 迁移的内存旧配置兼容使用；daemon 正式运行时始终使用本地缓存。
+		if len(c.SubscriptionPools) == 0 && len(c.Subscriptions) > 0 {
+			activeSubscriptions = c.Subscriptions
+			legacyRemote = true
+		} else {
+			return nil, nil, nil, err
+		}
 	}
 
 	proxyProviders := make(map[string]proxyProviderYAML)
-	providerNames := make([]string, 0, len(c.Subscriptions))
-	for i, sub := range c.Subscriptions {
-		if sub.URL == "" || sub.URL == "手动配置" {
+	providerNames := make([]string, 0, len(activeSubscriptions))
+	for i, sub := range activeSubscriptions {
+		if legacyRemote && (sub.URL == "" || sub.URL == "手动配置") {
 			continue
 		}
 		providerName := fmt.Sprintf("provider%d", i+1)
 		providerNames = append(providerNames, providerName)
-		proxyProviders[providerName] = proxyProviderYAML{
-			URL:      sub.URL,
-			Type:     "http",
-			Interval: DayInSeconds,
+		provider := proxyProviderYAML{Type: "file", Interval: 0,
+			Path: sub.CacheFile,
 			HealthCheck: healthCheckYAML{
 				Enable:   true,
 				URL:      c.Mihomo.TestURL,
 				Interval: HealthCheckInterval,
 			},
-			Override: providerOverrideYAML{
-				AdditionalPrefix: "",
-			},
+			Override: providerOverrideYAML{AdditionalPrefix: ""},
 		}
+		if legacyRemote {
+			provider.Type = "http"
+			provider.URL = sub.URL
+			provider.Path = ""
+			provider.Interval = DayInSeconds
+		}
+		proxyProviders[providerName] = provider
 	}
 	if len(providerNames) == 0 {
 		return nil, nil, nil, fmt.Errorf("没有有效的订阅 URL")
@@ -358,92 +368,92 @@ func (c *Config) defaultProxyGroup() string {
 	return "Auto"
 }
 
-// buildRuleConfig 构建规则相关配置（rule-providers、rules）
+// buildRuleConfig 构建规则相关配置（rule-providers、rules）。
+// 规则顺序由配置持久化，避免 map 遍历导致规则优先级随机变化。
 func (c *Config) buildRuleConfig() (map[string]ruleProviderYAML, []string, error) {
 	ruleProviders := make(map[string]ruleProviderYAML)
-	rpProxyGroups := make(map[string]string)
+	if c.ProxyMode == "global" {
+		return ruleProviders, []string{"MATCH," + c.defaultProxyGroup()}, nil
+	}
+	if c.ProxyMode == "direct" {
+		return ruleProviders, []string{"MATCH,DIRECT"}, nil
+	}
 
+	rules := make([]string, 0, len(c.PreCustomRules)+len(c.PostCustomRules)+len(c.BuiltInRules)+len(c.RuleProviderSubscriptions))
+	rules = append(rules, c.PreCustomRules...)
+	// 用户规则订阅保持配置列表顺序，且始终在内置规则之前。
 	for _, rp := range c.RuleProviderSubscriptions {
-		if rp.URL == "" {
+		providerName, provider, group, ok := c.ruleProviderFromSubscription(rp, "custom-")
+		if !ok {
 			continue
 		}
-		format := rp.Format
-		if format == "" {
-			format = "yaml"
-		}
-		interval := rp.Interval
-		if interval <= 0 {
-			interval = DayInSeconds
-		}
-		proxyGroup := rp.ProxyGroup
-		if proxyGroup == "" {
-			proxyGroup = c.defaultProxyGroup()
-		}
-		sanitized := SanitizeFileName(rp.Name)
-		ext := format
-		if ext == "text" {
-			ext = "txt"
-		}
-		prefix := sanitized
-		if len(prefix) > 3 {
-			prefix = prefix[:3]
-		}
-		hash := md5.Sum([]byte(rp.URL))
-		providerName := prefix + hex.EncodeToString(hash[:])
-		ruleProviders[providerName] = ruleProviderYAML{
-			Type:       "http",
-			Behavior:   rp.Behavior,
-			URL:        rp.URL,
-			Path:       fmt.Sprintf("./rules/%s.%s", sanitized, ext),
-			Format:     format,
-			Interval:   interval,
-			ProxyGroup: proxyGroup,
-		}
-		rpProxyGroups[providerName] = proxyGroup
+		ruleProviders[providerName] = provider
+		rules = append(rules, fmt.Sprintf("RULE-SET,%s,%s", providerName, group))
 	}
-
-	rules := make([]string, 0)
-
-	switch c.ProxyMode {
-	case "global":
-		rules = append(rules, "MATCH,"+c.defaultProxyGroup())
-	case "direct":
-		rules = append(rules, "MATCH,DIRECT")
-	case "rule":
-		// 用户自定义规则优先级最高，插入在最前面
-		rules = append(rules, c.CustomRules...)
-		// SSH 流量必须直连，防止 TUN 劫持后误走代理导致远程服务器 SSH 卡顿/断开
-		rules = append(rules, "DST-PORT,22,DIRECT")
-		for name := range ruleProviders {
-			pg := rpProxyGroups[name]
-			if pg == "" {
-				pg = c.defaultProxyGroup()
-			}
-			rules = append(rules, fmt.Sprintf("RULE-SET,%s,%s", name, pg))
+	for _, entry := range c.BuiltInRules {
+		if entry.Kind == BuiltInRuleMatch || !entry.Enabled {
+			continue
 		}
-
-		// 加载内置规则提供者
-		for name, rp := range builtInRulesProviders {
-			if _, exists := ruleProviders[name]; !exists {
-				ruleProviders[name] = rp
-				pg := rp.ProxyGroup
-				if pg == "Auto" {
-					pg = c.defaultProxyGroup()
-				}
-				rules = append(rules, fmt.Sprintf("RULE-SET,%s,%s", name, pg))
+		switch entry.Kind {
+		case BuiltInRuleLiteral:
+			rules = append(rules, normalizeRuleGroup(entry.Rule, c.defaultProxyGroup()))
+		case BuiltInRuleProvider:
+			providerName := "builtin-" + SanitizeFileName(entry.ID)
+			format := entry.Format
+			if format == "" {
+				format = "yaml"
 			}
-		}
-		// 加载默认规则，将写死的 Auto 替换为用户配置的默认策略
-		for _, rule := range DEFAULT_RULES {
-			if before, ok0 := strings.CutSuffix(rule, ",Auto"); ok0 {
-				rules = append(rules, before+","+c.defaultProxyGroup())
-			} else {
-				rules = append(rules, rule)
+			ext := format
+			if ext == "text" {
+				ext = "txt"
 			}
+			group := entry.ProxyGroup
+			if group == "" || group == "Auto" {
+				group = c.defaultProxyGroup()
+			}
+			ruleProviders[providerName] = ruleProviderYAML{Type: "http", Behavior: entry.Behavior, URL: entry.URL, Path: fmt.Sprintf("./rules/%s.%s", SanitizeFileName(entry.ID), ext), Format: format, Interval: entry.Interval, ProxyGroup: group}
+			rules = append(rules, fmt.Sprintf("RULE-SET,%s,%s", providerName, group))
 		}
-		rules = append(rules, "MATCH,"+c.defaultProxyGroup())
+	}
+	rules = append(rules, c.PostCustomRules...)
+	// MATCH 已由 Validate 约束为唯一且最后；这里固定最后输出以维持兜底语义。
+	for _, entry := range c.BuiltInRules {
+		if entry.Kind == BuiltInRuleMatch {
+			group := entry.ProxyGroup
+			if group == "" || group == "Auto" {
+				group = c.defaultProxyGroup()
+			}
+			rules = append(rules, "MATCH,"+group)
+			break
+		}
 	}
 	return ruleProviders, rules, nil
+}
+
+func (c *Config) ruleProviderFromSubscription(rp RuleProviderSubscription, prefix string) (string, ruleProviderYAML, string, bool) {
+	if rp.URL == "" {
+		return "", ruleProviderYAML{}, "", false
+	}
+	format := rp.Format
+	if format == "" {
+		format = "yaml"
+	}
+	interval := rp.Interval
+	if interval <= 0 {
+		interval = DayInSeconds
+	}
+	group := rp.ProxyGroup
+	if group == "" || group == "Auto" {
+		group = c.defaultProxyGroup()
+	}
+	sanitized := SanitizeFileName(rp.Name)
+	ext := format
+	if ext == "text" {
+		ext = "txt"
+	}
+	hash := md5.Sum([]byte(rp.URL))
+	name := prefix + sanitized + "-" + hex.EncodeToString(hash[:4])
+	return name, ruleProviderYAML{Type: "http", Behavior: rp.Behavior, URL: rp.URL, Path: fmt.Sprintf("./rules/%s.%s", sanitized, ext), Format: format, Interval: interval, ProxyGroup: group}, group, true
 }
 
 // buildGlobalConfig 构建全局基础配置（端口、DNS、TUN、嗅探等）
@@ -576,25 +586,28 @@ func (c *Config) GenerateMihomoConfig() error {
 	}
 
 	mihomoDir := filepath.Join(GetConfigDir(), "mihomo")
-	if err := os.MkdirAll(mihomoDir, 0755); err != nil {
+	if err := os.MkdirAll(mihomoDir, 0700); err != nil {
 		return fmt.Errorf("创建 mihomo 配置目录失败: %w", err)
+	}
+	if err := os.Chmod(mihomoDir, 0700); err != nil {
+		return fmt.Errorf("收紧 mihomo 配置目录权限失败: %w", err)
 	}
 	configPath := filepath.Join(mihomoDir, MIHOMO_CONFIG_NAME)
 
 	tmpPath := configPath + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
 		return fmt.Errorf("写入临时 mihomo 配置失败: %w", err)
 	}
 	if err := os.Rename(tmpPath, configPath); err != nil {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("替换 mihomo 配置文件失败: %w", err)
 	}
-
-	// 同步更新配置中的 MihomoConfigPath
-	c.MihomoConfigPath = configPath
-	if err := c.Flush(); err != nil {
-		return fmt.Errorf("保存配置路径更新失败: %w", err)
+	if err := os.Chmod(configPath, 0600); err != nil {
+		return fmt.Errorf("收紧 mihomo 配置文件权限失败: %w", err)
 	}
+
+	// 同步内存中的 MihomoConfigPath（持久化由配置提交层负责）
+	c.MihomoConfigPath = configPath
 
 	return nil
 }

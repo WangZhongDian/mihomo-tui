@@ -4,13 +4,68 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"os/user"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"text/template"
 
 	"mihomotui/mihomotui"
 )
+
+// installBinaryAtomically replaces target without truncating its current inode.
+// This makes repeated installs safe even when a recently stopped systemd process
+// still has the previous executable mapped in memory.
+func installBinaryAtomically(source, target string) error {
+	in, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(target), ".mihomo-tui-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	completed := false
+	defer func() {
+		if !completed {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if _, err := io.Copy(tmp, in); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0755); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, target); err != nil {
+		return err
+	}
+	completed = true
+	// Best-effort directory sync makes the rename durable; unsupported filesystems
+	// should not turn an otherwise successful install into a failure.
+	if dir, err := os.Open(filepath.Dir(target)); err == nil {
+		_ = dir.Sync()
+		_ = dir.Close()
+	}
+	return nil
+}
 
 // InstallService 将当前程序安装为 systemd 系统服务
 // 需要 root 权限执行
@@ -31,31 +86,44 @@ func InstallService() error {
 		mihomotui.CleanupEnvironment()
 	}
 
-	// 3. 获取当前可执行文件路径
+	// 3. 确保 root daemon 的 IPC 授权组存在：mihomo-tui 仅允许读取状态，
+	// mihomo-tui-operator 可以管理订阅；系统级操作仍由 daemon 的 peer credential 限制。
+	if err := ensureIPCAuthorizationGroups(); err != nil {
+		return err
+	}
+	if userName := os.Getenv("SUDO_USER"); userName != "" && userName != "root" {
+		if err := AddIPCOperator(userName); err != nil {
+			return err
+		}
+		fmt.Printf("   已验证用户 %s 已加入 IPC 授权组。\n", userName)
+		fmt.Println("   组权限只会在新的登录会话中生效；请注销桌面会话并重新登录。")
+		fmt.Println("   临时生效可执行: newgrp mihomo-tui")
+	}
+
+	// 4. 获取当前可执行文件路径
 	execPath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("获取可执行文件路径失败: %w", err)
 	}
 
-	// 4. 确定目标安装路径
+	// 5. 确定目标安装路径
 	targetPath := "/usr/local/bin/mihomo-tui"
 
 	// 如果当前路径不是目标路径，则复制
 	if execPath != targetPath {
-		data, err := os.ReadFile(execPath)
-		if err != nil {
-			return fmt.Errorf("读取可执行文件失败: %w", err)
-		}
-		if err := os.WriteFile(targetPath, data, 0755); err != nil {
+		// 不能直接 O_TRUNC 覆盖目标文件：旧 daemon 即使尚未完全退出，
+		// Linux 也会返回 ETXTBSY（text file busy）。同目录临时文件 + rename
+		// 是原子替换，允许正在执行旧 inode 的进程自然退出。
+		if err := installBinaryAtomically(execPath, targetPath); err != nil {
 			return fmt.Errorf("复制可执行文件到 %s 失败: %w", targetPath, err)
 		}
-		mihomotui.Infof("已复制可执行文件到 %s", targetPath)
+		mihomotui.Infof("已原子替换可执行文件: %s", targetPath)
 	}
 
-	// 5. 以 root 用户运行服务
+	// 6. 以 root 用户运行服务
 	runUser := "root"
 
-	// 6. 生成 systemd unit 文件
+	// 7. 生成 systemd unit 文件
 	unitPath := "/etc/systemd/system/mihomo-tui.service"
 	tmpl, err := template.New("unit").Parse(ServiceUnitTemplate)
 	if err != nil {
@@ -80,19 +148,19 @@ func InstallService() error {
 	}
 	mihomotui.Infof("已写入服务文件: %s", unitPath)
 
-	// 7. daemon-reload
+	// 8. daemon-reload
 	if output, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {
 		return fmt.Errorf("systemctl daemon-reload 失败: %w, 输出: %s", err, string(output))
 	}
 	mihomotui.Infof("已执行 systemctl daemon-reload")
 
-	// 8. enable 服务
+	// 9. enable 服务
 	if output, err := exec.Command("systemctl", "enable", "mihomo-tui").CombinedOutput(); err != nil {
 		return fmt.Errorf("systemctl enable 失败: %w, 输出: %s", err, string(output))
 	}
 	mihomotui.Infof("已执行 systemctl enable mihomo-tui")
 
-	// 9. 启动服务
+	// 10. 启动服务
 	if output, err := exec.Command("systemctl", "start", "mihomo-tui").CombinedOutput(); err != nil {
 		return fmt.Errorf("启动服务失败: %w, 输出: %s", err, string(output))
 	}
@@ -109,6 +177,90 @@ func InstallService() error {
 	fmt.Println("   sudo systemctl restart mihomo-tui")
 	fmt.Println("   sudo systemctl status  mihomo-tui")
 	return nil
+}
+
+// ensureIPCAuthorizationGroups 创建 root daemon 使用的最小权限 IPC 授权组。
+// mihomo-tui 组成员可读取不含敏感信息的状态；mihomo-tui-operator 组成员可管理订阅。
+func ensureIPCAuthorizationGroups() error {
+	for _, groupName := range []string{"mihomo-tui", "mihomo-tui-operator"} {
+		if _, err := user.LookupGroup(groupName); err == nil {
+			continue
+		}
+		if output, err := exec.Command("groupadd", "--system", groupName).CombinedOutput(); err != nil {
+			// groupadd 可能与其他安装过程并发；再次查询确认即可。
+			if _, lookupErr := user.LookupGroup(groupName); lookupErr == nil {
+				continue
+			}
+			return fmt.Errorf("创建 IPC 授权组 %s 失败: %w, 输出: %s", groupName, err, string(output))
+		}
+		mihomotui.Infof("已创建 IPC 授权组: %s", groupName)
+	}
+	return nil
+}
+
+// AddIPCReader 将指定用户加入只读 IPC 授权组。
+func AddIPCReader(userName string) error {
+	return addIPCUserToGroups(userName, "mihomo-tui")
+}
+
+// AddIPCOperator 将指定用户加入可管理订阅的 IPC 授权组。
+func AddIPCOperator(userName string) error {
+	return addIPCUserToGroups(userName, "mihomo-tui", "mihomo-tui-operator")
+}
+
+func addIPCUserToGroups(userName string, groups ...string) error {
+	if userName == "" {
+		return fmt.Errorf("用户名不能为空")
+	}
+	if os.Geteuid() != 0 {
+		return fmt.Errorf("管理 IPC 授权组需要 root 权限")
+	}
+	if err := ensureIPCAuthorizationGroups(); err != nil {
+		return err
+	}
+	if _, err := user.Lookup(userName); err != nil {
+		return fmt.Errorf("用户 %s 不存在: %w", userName, err)
+	}
+	if output, err := exec.Command("usermod", "-aG", strings.Join(groups, ","), userName).CombinedOutput(); err != nil {
+		return fmt.Errorf("将用户 %s 加入 IPC 授权组失败: %w, 输出: %s", userName, err, string(output))
+	}
+	if err := verifyIPCGroupMembership(userName, groups...); err != nil {
+		return err
+	}
+	mihomotui.Infof("已授予 IPC 权限: user=%s groups=%s", userName, strings.Join(groups, ","))
+	return nil
+}
+
+// verifyIPCGroupMembership 确认组数据库已经写入。usermod 返回 0 但 NSS/组数据库未更新时，
+// 不能继续向用户报告“授权成功”，否则后续排查会非常困难。
+func verifyIPCGroupMembership(userName string, groups ...string) error {
+	output, err := exec.Command("id", "-nG", userName).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("验证用户 %s 的 IPC 授权组失败: %w, 输出: %s", userName, err, string(output))
+	}
+	memberships := make(map[string]bool)
+	for _, name := range strings.Fields(string(output)) {
+		memberships[name] = true
+	}
+	for _, groupName := range groups {
+		if !memberships[groupName] {
+			return fmt.Errorf("usermod 已执行，但系统组数据库中用户 %s 仍未加入 %s；请检查 /etc/group、NSS 配置或 usermod 输出", userName, groupName)
+		}
+	}
+	return nil
+}
+
+// IPCOperatorGroupGID 返回操作组 GID，用于诊断和测试。
+func IPCOperatorGroupGID() (int, error) {
+	group, err := user.LookupGroup("mihomo-tui-operator")
+	if err != nil {
+		return 0, err
+	}
+	gid, err := strconv.Atoi(group.Gid)
+	if err != nil {
+		return 0, err
+	}
+	return gid, nil
 }
 
 // UninstallService 卸载 systemd 系统服务

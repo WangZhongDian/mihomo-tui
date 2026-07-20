@@ -20,16 +20,12 @@ type Daemon struct {
 	mihomoAPI       *MihomoAPI
 	mihomoProcess   *MihomoProcess
 	upgradeProgress UpgradeProgress
-}
 
-// socketPath 返回 UDS socket 文件路径（固定路径，支持 root server + 普通用户 TUI）
-func socketPath() string {
-	return filepath.Join(SocketDir, SocketFile)
-}
-
-// SocketPath 返回 UDS socket 文件路径（导出给 ui 包使用）
-func SocketPath() string {
-	return socketPath()
+	// 配置应用串行化（P1）：所有运行时应用任务经 reconcileCh 排队逐个执行。
+	reconcileOnce               sync.Once
+	reconcileCh                 chan reconcileRequest
+	reconcileApply              reconcileApplyFunc // 测试注入点；为 nil 时使用 runReconcile
+	subscriptionSchedulerCancel context.CancelFunc
 }
 
 // RunDaemon 启动 IPC 后台服务
@@ -57,20 +53,38 @@ func (d *Daemon) Run() error {
 	cfg := GlobalConfig()
 	Infof("守护进程启动，配置目录: %s", configDir)
 
-	// 确保 API secret 已设置（mihomo external-controller 需要认证）
+	// 将 LoadConfig 完成的历史订阅池迁移原子写回，保证下一次启动无需再次迁移。
+	if len(cfg.Subscriptions) > 0 && len(cfg.SubscriptionPools) > 0 {
+		if committed, err := UpdateGlobalConfig(func(c *Config) error { return nil }); err != nil {
+			Warnf("持久化订阅池迁移失败: %v", err)
+		} else {
+			cfg = &committed
+		}
+	}
+
+	// 确保 API secret 已设置（mihomo external-controller 需要认证）；
+	// 通过原子提交持久化，失败时内存与磁盘保持一致。
 	if cfg.Mihomo.Secret == "" {
-		cfg.Mihomo.Secret = generateRandomSecret()
-		if err := cfg.Flush(); err != nil {
+		committed, err := UpdateGlobalConfig(func(c *Config) error {
+			if c.Mihomo.Secret == "" {
+				c.Mihomo.Secret = generateRandomSecret()
+			}
+			return nil
+		})
+		if err != nil {
 			Warnf("保存 API secret 失败: %v", err)
 		} else {
+			cfg = &committed
 			Infof("已生成 API secret")
 		}
 	}
 
 	// 自动创建 mihomo 工作目录
 	mihomoDir := filepath.Join(configDir, "mihomo")
-	if err := os.MkdirAll(mihomoDir, 0755); err != nil {
+	if err := os.MkdirAll(mihomoDir, 0700); err != nil {
 		Warnf("创建 mihomo 工作目录失败: %v", err)
+	} else if err := os.Chmod(mihomoDir, 0700); err != nil {
+		Warnf("收紧 mihomo 工作目录权限失败: %v", err)
 	}
 
 	// 初始化 mihomo API 客户端
@@ -78,15 +92,23 @@ func (d *Daemon) Run() error {
 
 	// 初始化 mihomo 进程管理器
 	d.mihomoProcess = NewMihomoProcess()
+	MigrateLegacyMihomoBinary()
+	d.backfillSubscriptionMetadataFromCaches()
+	d.startSubscriptionScheduler()
 
-	// 确保 socket 父目录存在（权限 0777，确保任何用户都能清理旧 socket）
-	sock := socketPath()
+	// 初始化 IPC 授权器，并以最小权限创建 socket 目录。root daemon 只允许
+	// mihomo-tui 组成员通过 socket 访问；普通 daemon 则只允许启动它的用户访问。
+	authorizer, err := newIPCAuthorizer()
+	if err != nil {
+		return fmt.Errorf("初始化 IPC 授权失败: %w", err)
+	}
+	sock := daemonSocketPath()
 	sockDir := filepath.Dir(sock)
-	if err := os.MkdirAll(sockDir, 0777); err != nil {
+	if err := os.MkdirAll(sockDir, 0750); err != nil {
 		return fmt.Errorf("创建 socket 目录失败: %w", err)
 	}
-	if err := os.Chmod(sockDir, 0777); err != nil {
-		Warnf("设置 socket 目录权限失败: %v", err)
+	if err := authorizer.configureSocketDirectory(sockDir); err != nil {
+		return err
 	}
 
 	// 清理旧 socket
@@ -107,18 +129,14 @@ func (d *Daemon) Run() error {
 	}
 	defer listener.Close()
 
-	// 设置 socket 权限：root 启动时 0666（允许任何用户连接），普通用户 0660
-	sockPerm := os.FileMode(0660)
-	if os.Geteuid() == 0 {
-		sockPerm = 0666
-	}
-	if err := os.Chmod(sock, sockPerm); err != nil {
-		Warnf("设置 socket 权限失败: %v", err)
+	if err := authorizer.configureSocketPermissions(sock); err != nil {
+		return fmt.Errorf("设置 IPC socket 权限失败: %w", err)
 	}
 
 	d.listener = listener
 	d.server = &http.Server{
-		Handler: d.router(),
+		Handler:     authorizer.middleware(d.router()),
+		ConnContext: authorizer.connContext,
 	}
 
 	Infof("IPC 服务已启动: %s", sock)
@@ -129,6 +147,9 @@ func (d *Daemon) Run() error {
 
 // Stop 停止守护进程
 func (d *Daemon) Stop() error {
+	if d.subscriptionSchedulerCancel != nil {
+		d.subscriptionSchedulerCancel()
+	}
 	if d.server != nil {
 		return d.server.Shutdown(context.Background())
 	}
@@ -145,6 +166,8 @@ func (d *Daemon) router() http.Handler {
 	// 订阅
 	mux.HandleFunc("/api/v1/subscriptions", d.handleSubscriptions)
 	mux.HandleFunc("/api/v1/subscriptions/", d.handleSubscriptionDetail)
+	mux.HandleFunc("/api/v1/subscription-pools", d.handleSubscriptionPools)
+	mux.HandleFunc("/api/v1/subscription-pools/", d.handleSubscriptionPoolDetail)
 
 	// 规则订阅
 	mux.HandleFunc("/api/v1/rule-providers", d.handleRuleProviders)
@@ -152,9 +175,13 @@ func (d *Daemon) router() http.Handler {
 
 	// mihomo 管理
 	mux.HandleFunc("/api/v1/mihomo/status", d.handleMihomoStatus)
+	mux.HandleFunc("/api/v1/mihomo/api-credentials", d.handleMihomoAPICredentials)
 	mux.HandleFunc("/api/v1/mihomo/start", d.handleMihomoStart)
 	mux.HandleFunc("/api/v1/mihomo/stop", d.handleMihomoStop)
 	mux.HandleFunc("/api/v1/mihomo/restart", d.handleMihomoRestart)
+	mux.HandleFunc("/api/v1/mihomo/versions", d.handleMihomoVersions)
+	mux.HandleFunc("/api/v1/mihomo/versions/refresh", d.handleMihomoVersionsRefresh)
+	mux.HandleFunc("/api/v1/mihomo/versions/", d.handleMihomoVersionDetail)
 	mux.HandleFunc("/api/v1/mihomo/upgrade", d.handleMihomoUpgrade)
 	mux.HandleFunc("/api/v1/mihomo/upgrade/progress", d.handleMihomoUpgradeProgress)
 	mux.HandleFunc("/api/v1/mihomo/version", d.handleMihomoVersion)
@@ -213,8 +240,9 @@ func (d *Daemon) handleDaemonInfo(w http.ResponseWriter, r *http.Request) {
 		launchMode = "standalone"
 	}
 	info := DaemonInfo{
-		LaunchMode: launchMode,
-		IsRoot:     os.Geteuid() == 0,
+		LaunchMode:      launchMode,
+		IsRoot:          os.Geteuid() == 0,
+		CanManageMihomo: requestIPCRole(r) == ipcRoleAdmin,
 	}
 	writeJSON(w, http.StatusOK, ok(info))
 }
