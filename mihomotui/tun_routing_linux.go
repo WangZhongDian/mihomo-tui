@@ -118,6 +118,9 @@ func isTUNNotFoundError(err error) bool {
 	message := strings.ToLower(err.Error())
 	for _, marker := range []string{
 		"no such file", "no such process", "no chain/target/match", "bad rule", "does a matching rule exist",
+		// iptables-nft 在跳转目标链已被删除时使用此措辞。
+		// 这表示清理目标已不存在，而不是清理失败。
+		"does not exist",
 	} {
 		if strings.Contains(message, marker) {
 			return true

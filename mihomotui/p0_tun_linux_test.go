@@ -3,6 +3,7 @@
 package mihomotui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -52,5 +53,19 @@ func TestTUNPolicyCleanupRequiresPersistedOwnershipState(t *testing.T) {
 
 	if _, err := tunPolicyCleanupCommands(tunRoutingState{Interface: "eth0"}); err == nil {
 		t.Fatal("incomplete ownership state unexpectedly permitted policy cleanup")
+	}
+}
+
+func TestTUNNotFoundErrorRecognizesIPTablesNFTMissingChain(t *testing.T) {
+	err := errors.New("执行失败: iptables -t mangle -D PREROUTING -j MIHOMO_TUI_PREROUTING: exit status 2; output: iptables v1.8.10 (nf_tables): Chain 'MIHOMO_TUI_PREROUTING' does not exist")
+	if !isTUNNotFoundError(err) {
+		t.Fatal("iptables-nft missing-chain error must be treated as an idempotent cleanup result")
+	}
+}
+
+func TestTUNNotFoundErrorDoesNotHidePermissionError(t *testing.T) {
+	err := errors.New("执行失败: iptables -t mangle -D PREROUTING: exit status 4; output: Permission denied (you must be root)")
+	if isTUNNotFoundError(err) {
+		t.Fatal("permission error must remain visible")
 	}
 }
