@@ -36,7 +36,7 @@ type subscriptionFetchResult struct {
 // Many airport endpoints intentionally expose subscription-userinfo only to
 // Clash-compatible clients. Keep a broadly accepted default while allowing a
 // per-subscription override in the editor.
-const defaultSubscriptionUserAgent = "mihomo-tui/1.0 clash"
+const defaultSubscriptionUserAgent = "ClashMeta Mihomo-tui/1.0 clash"
 
 func (d *Daemon) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {

@@ -51,7 +51,7 @@ func TestSubscriptionUserAgentAndProxyStrategy(t *testing.T) {
 
 func TestFetchSubscriptionUsesConfiguredUserAgent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got, want := r.UserAgent(), "mihomo-tui/1.0 clash"; got != want {
+		if got, want := r.UserAgent(), "ClashMeta Mihomo-tui/1.0 clash"; got != want {
 			http.Error(w, "unexpected user-agent", http.StatusForbidden)
 			return
 		}
@@ -59,7 +59,7 @@ func TestFetchSubscriptionUsesConfiguredUserAgent(t *testing.T) {
 		_, _ = w.Write([]byte("ss://example-node"))
 	}))
 	defer server.Close()
-	got, err := fetchSubscriptionWithOptions(server.URL, subscriptionFetchOptions{UserAgent: "mihomo-tui/1.0 clash", Strategy: SubscriptionFetchDirect})
+	got, err := fetchSubscriptionWithOptions(server.URL, subscriptionFetchOptions{UserAgent: "ClashMeta Mihomo-tui/1.0 clash", Strategy: SubscriptionFetchDirect})
 	if err != nil {
 		t.Fatalf("fetchSubscriptionWithOptions() error = %v", err)
 	}
