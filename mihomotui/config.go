@@ -162,12 +162,17 @@ type Config struct {
 	SubscriptionPools         []SubscriptionPool         `yaml:"subscription_pools,omitempty"`
 	ActiveSubscription        int                        `yaml:"active_subscription"`
 	RuleProviderSubscriptions []RuleProviderSubscription `yaml:"rule_provider_subscriptions"`
-	CustomRules               []string                   `yaml:"custom_rules"`
-	ExternalResources         ExternalResources          `yaml:"external_resources"`
-	ProxyMode                 string                     `yaml:"proxy_mode"`
-	DefaultProxyGroup         string                     `yaml:"default_proxy_group"`
-	LogDir                    string                     `yaml:"log_dir"`
-	LogLevel                  string                     `yaml:"log_level"`
+	// CustomRules is retained for backward-compatible YAML reads; new writes use PreCustomRules.
+	CustomRules             []string          `yaml:"custom_rules,omitempty"`
+	PreCustomRules          []string          `yaml:"pre_custom_rules,omitempty"`
+	PostCustomRules         []string          `yaml:"post_custom_rules,omitempty"`
+	BuiltInRulesInitialized bool              `yaml:"built_in_rules_initialized,omitempty"`
+	BuiltInRules            []BuiltInRule     `yaml:"built_in_rules,omitempty"`
+	ExternalResources       ExternalResources `yaml:"external_resources"`
+	ProxyMode               string            `yaml:"proxy_mode"`
+	DefaultProxyGroup       string            `yaml:"default_proxy_group"`
+	LogDir                  string            `yaml:"log_dir"`
+	LogLevel                string            `yaml:"log_level"`
 }
 
 // 下载 URL 常量已迁移至 constants.go，保留别名避免编译中断
@@ -275,10 +280,12 @@ func defaultConfig() Config {
 			GeoSite: DEFAULT_GEOSITE_DOWNLOAD_URL,
 			Mihomo:  DEFAULT_MIHOMO_DOWNLOAD_URL,
 		},
-		ProxyMode:         "rule",
-		DefaultProxyGroup: "Auto",
-		LogDir:            filepath.Join(GetConfigDir(), "logs"),
-		LogLevel:          "info",
+		BuiltInRulesInitialized: true,
+		BuiltInRules:            defaultBuiltInRules(),
+		ProxyMode:               "rule",
+		DefaultProxyGroup:       "Auto",
+		LogDir:                  filepath.Join(GetConfigDir(), "logs"),
+		LogLevel:                "info",
 	}
 }
 
@@ -390,6 +397,9 @@ func LoadConfig() Config {
 		cfg.SubscriptionPools = []SubscriptionPool{{ID: newSubscriptionID(), Name: "默认订阅池", Members: members, ActiveMemberID: active, Enabled: true, RefreshInterval: DayInSeconds}}
 		// 延后由 daemon 首次配置提交写回，避免 LoadConfig 期间递归写日志。
 	}
+	// 迁移旧规则配置：历史 CustomRules 保持最高优先级，迁入前置规则。
+	cfg.ensureBuiltInRules()
+
 	// 自愈：活动订阅索引越界时收敛到合法范围，避免后续提交校验失败。
 	if cfg.ActiveSubscription >= len(cfg.Subscriptions) {
 		cfg.ActiveSubscription = len(cfg.Subscriptions) - 1

@@ -16,7 +16,7 @@ func NewRulesPage(app *tview.Application) tview.Primitive {
 	pages := tview.NewPages()
 	pages.Focus(func(p tview.Primitive) { app.SetFocus(p) })
 
-	activeTab := 0 // 0 = 规则列表, 1 = 规则订阅, 2 = 自定义规则
+	activeTab := 0 // 0 = 规则列表, 1 = 规则订阅, 2 = 自定义规则, 3 = 内置规则
 
 	// ===== 规则列表页面 =====
 	rulesListPage := newRulesListPage(app, pages)
@@ -27,9 +27,13 @@ func NewRulesPage(app *tview.Application) tview.Primitive {
 	// ===== 自定义规则页面 =====
 	customRulesPage := newCustomRulesPage(app, pages)
 
+	// ===== 内置规则页面 =====
+	builtInRulesPage := newBuiltInRulesPage(app, pages)
+
 	pages.AddPage("rules_list", rulesListPage, true, true)
 	pages.AddPage("rule_providers", ruleProviderPage, true, false)
 	pages.AddPage("custom_rules", customRulesPage, true, false)
+	pages.AddPage("builtin_rules", builtInRulesPage, true, false)
 
 	// ===== Tab 栏（三个 Button 水平排列）=====
 	tab1Btn := tview.NewButton(" 规则列表 ")
@@ -38,11 +42,14 @@ func NewRulesPage(app *tview.Application) tview.Primitive {
 	tab2Btn.SetBorder(false)
 	tab3Btn := tview.NewButton(" 自定义规则 ")
 	tab3Btn.SetBorder(false)
+	tab4Btn := tview.NewButton(" 内置规则 ")
+	tab4Btn.SetBorder(false)
 
 	updateTabHighlight := func() {
 		tab1Btn.SetLabel(" 规则列表 ")
 		tab2Btn.SetLabel(" 规则订阅 ")
 		tab3Btn.SetLabel(" 自定义规则 ")
+		tab4Btn.SetLabel(" 内置规则 ")
 		switch activeTab {
 		case 0:
 			tab1Btn.SetLabel("[规则列表]")
@@ -50,6 +57,8 @@ func NewRulesPage(app *tview.Application) tview.Primitive {
 			tab2Btn.SetLabel("[规则订阅]")
 		case 2:
 			tab3Btn.SetLabel("[自定义规则]")
+		case 3:
+			tab4Btn.SetLabel("[内置规则]")
 		}
 	}
 	updateTabHighlight()
@@ -70,17 +79,22 @@ func NewRulesPage(app *tview.Application) tview.Primitive {
 		case 2:
 			pages.SwitchToPage("custom_rules")
 			app.SetFocus(customRulesPage)
+		case 3:
+			pages.SwitchToPage("builtin_rules")
+			app.SetFocus(builtInRulesPage)
 		}
 	}
 
 	tab1Btn.SetSelectedFunc(func() { switchToTab(0) })
 	tab2Btn.SetSelectedFunc(func() { switchToTab(1) })
 	tab3Btn.SetSelectedFunc(func() { switchToTab(2) })
+	tab4Btn.SetSelectedFunc(func() { switchToTab(3) })
 
 	tabBar := tview.NewFlex().
 		AddItem(tab1Btn, 0, 1, true).
 		AddItem(tab2Btn, 0, 1, true).
-		AddItem(tab3Btn, 0, 1, true)
+		AddItem(tab3Btn, 0, 1, true).
+		AddItem(tab4Btn, 0, 1, true)
 
 	// 主布局
 	mainLayout := tview.NewFlex().SetDirection(tview.FlexRow).
@@ -642,147 +656,267 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 	return page
 }
 
-// newCustomRulesPage 创建自定义规则管理页面
+// newCustomRulesPage manages custom rules on either side of built-in rules.
 func newCustomRulesPage(app *tview.Application, pages *tview.Pages) tview.Primitive {
-	cfg := mihomotui.GlobalConfig()
-
-	knownPolicies := mihomotui.PolicyList
-	hasPolicy := func(rule string) bool {
-		lastComma := strings.LastIndex(rule, ",")
-		if lastComma < 0 {
-			return false
-		}
-		suffix := strings.TrimSpace(rule[lastComma+1:])
-		return slices.Contains(knownPolicies, suffix)
-	}
-
-	ruleInput := tview.NewInputField().
-		SetPlaceholder(" DOMAIN,google.com 或 IP-CIDR,1.1.1.1/32,no-resolve").
-		SetFieldBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
-	ruleInput.SetBorder(true).SetTitle(" 规则 ")
-
-	policyDropdown := tview.NewDropDown().
-		SetOptions(knownPolicies, nil).
-		SetCurrentOption(0)
-	policyDropdown.SetBorder(true).SetTitle(" 策略 ")
-
-	addBtn := tview.NewButton(" 添加 ")
-	addBtn.SetBorder(false)
-
-	toolbar := tview.NewFlex().
-		AddItem(ruleInput, 0, 3, true).
-		AddItem(policyDropdown, 14, 0, false).
-		AddItem(addBtn, 10, 0, false)
-
-	listFlex := tview.NewFlex().SetDirection(tview.FlexRow)
-	statusBar := tview.NewTextView().
-		SetDynamicColors(true).
-		SetText("")
-
-	refreshList := func() {}
-
-	deleteRule := func(idx int) {
-		if idx < 0 || idx >= len(cfg.CustomRules) {
-			return
-		}
-		// 按规则内容删除，避免提交期间索引因并发修改而漂移
-		ruleText := cfg.CustomRules[idx]
+	input := tview.NewInputField().SetPlaceholder("DOMAIN,example.com 或 IP-CIDR,1.1.1.1/32,no-resolve")
+	input.SetBorder(true).SetTitle("规则")
+	policy := tview.NewDropDown().SetOptions(mihomotui.PolicyList, nil).SetCurrentOption(0)
+	policy.SetBorder(true).SetTitle("策略")
+	position := tview.NewDropDown().SetOptions([]string{"前置", "后置"}, nil).SetCurrentOption(0)
+	position.SetBorder(true).SetTitle("位置")
+	add := tview.NewButton("添加")
+	list := tview.NewFlex().SetDirection(tview.FlexRow)
+	refresh := func() {}
+	commit := func(change func(*mihomotui.Config)) {
 		go func() {
-			_, err := mihomotui.MutateServerConfig(func(fresh *mihomotui.Config) {
-				for i, r := range fresh.CustomRules {
-					if r == ruleText {
-						fresh.CustomRules = append(fresh.CustomRules[:i], fresh.CustomRules[i+1:]...)
-						return
-					}
-				}
-			})
-			if err != nil {
-				app.QueueUpdateDraw(func() {
-					ShowAlertModal(app, pages, "删除失败", err.Error())
-				})
-				return
-			}
-			cfg = mihomotui.GlobalConfig()
+			_, err := mihomotui.MutateServerConfig(change)
 			app.QueueUpdateDraw(func() {
-				refreshList()
+				if err != nil {
+					ShowAlertModal(app, pages, "保存失败", err.Error())
+					return
+				}
+				refresh()
 			})
 		}()
 	}
-
-	refreshList = func() {
-		listFlex.Clear()
-		for i, rule := range cfg.CustomRules {
-			idx := i
-			r := rule
-			info := tview.NewTextView().
-				SetText(fmt.Sprintf(" %d. %s", i+1, r)).
-				SetDynamicColors(true)
-			deleteBtn := tview.NewButton(" ✕ ")
-			deleteBtn.SetBorder(false)
-			deleteBtn.SetSelectedFunc(func() {
-				ShowConfirmModal(app, pages, "确认删除", fmt.Sprintf("删除规则: %s", r), func() {
-					deleteRule(idx)
+	refresh = func() {
+		cfg := mihomotui.GlobalConfig()
+		list.Clear()
+		addGroup := func(title string, rules []string, post bool) {
+			list.AddItem(tview.NewTextView().SetText("[::b] "+title).SetDynamicColors(true), 1, 0, false)
+			for i, text := range rules {
+				idx, rule := i, text
+				info := tview.NewTextView().SetText(fmt.Sprintf(" %d. %s", i+1, text))
+				up := tview.NewButton("↑")
+				down := tview.NewButton("↓")
+				del := tview.NewButton("✕")
+				move := func(delta int) {
+					commit(func(c *mihomotui.Config) {
+						target := &c.PreCustomRules
+						if post {
+							target = &c.PostCustomRules
+						}
+						j := idx + delta
+						if j >= 0 && j < len(*target) {
+							(*target)[idx], (*target)[j] = (*target)[j], (*target)[idx]
+						}
+					})
+				}
+				up.SetSelectedFunc(func() { move(-1) })
+				down.SetSelectedFunc(func() { move(1) })
+				del.SetSelectedFunc(func() {
+					ShowConfirmModal(app, pages, "确认删除", rule, func() {
+						commit(func(c *mihomotui.Config) {
+							target := &c.PreCustomRules
+							if post {
+								target = &c.PostCustomRules
+							}
+							for k, v := range *target {
+								if v == rule {
+									*target = append((*target)[:k], (*target)[k+1:]...)
+									break
+								}
+							}
+						})
+					})
 				})
-			})
-			row := tview.NewFlex().
-				AddItem(info, 0, 1, false).
-				AddItem(deleteBtn, 4, 0, true)
-			row.SetBorder(false)
-			listFlex.AddItem(row, 1, 0, false)
+				list.AddItem(tview.NewFlex().AddItem(info, 0, 1, false).AddItem(up, 3, 0, false).AddItem(down, 3, 0, false).AddItem(del, 3, 0, false), 1, 0, false)
+			}
 		}
-		if len(cfg.CustomRules) == 0 {
-			empty := tview.NewTextView().
-				SetTextAlign(tview.AlignCenter).
-				SetText("\n暂无自定义规则")
-			listFlex.AddItem(empty, 0, 1, false)
-		}
-		statusBar.SetText(fmt.Sprintf(" 共%d条 ", len(cfg.CustomRules)))
+		addGroup("前置规则", cfg.PreCustomRules, false)
+		addGroup("后置规则", cfg.PostCustomRules, true)
 	}
-
-	addBtn.SetSelectedFunc(func() {
-		rule := strings.TrimSpace(ruleInput.GetText())
+	add.SetSelectedFunc(func() {
+		rule := strings.TrimSpace(input.GetText())
 		if rule == "" {
 			ShowAlertModal(app, pages, "添加失败", "请输入规则内容")
 			return
 		}
-		// 如果规则缺少策略，自动追加选择的策略
-		if !hasPolicy(rule) {
-			_, policy := policyDropdown.GetCurrentOption()
-			if policy != "" {
-				rule = rule + "," + policy
-			}
-		}
-		// 去重检查
-		if slices.Contains(cfg.CustomRules, rule) {
-			ShowAlertModal(app, pages, "添加失败", "该规则已存在")
+		if strings.HasPrefix(strings.ToUpper(rule), "MATCH,") {
+			ShowAlertModal(app, pages, "添加失败", "自定义规则不能包含 MATCH")
 			return
 		}
-		go func() {
-			_, err := mihomotui.MutateServerConfig(func(fresh *mihomotui.Config) {
-				if !slices.Contains(fresh.CustomRules, rule) {
-					fresh.CustomRules = append(fresh.CustomRules, rule)
-				}
-			})
-			if err != nil {
-				app.QueueUpdateDraw(func() {
-					ShowAlertModal(app, pages, "添加失败", err.Error())
-				})
-				return
+		if !strings.Contains(rule, ",") {
+			ShowAlertModal(app, pages, "添加失败", "规则格式不正确")
+			return
+		}
+		_, pg := policy.GetCurrentOption()
+		if !slices.Contains(mihomotui.PolicyList, strings.TrimSpace(rule[strings.LastIndex(rule, ",")+1:])) {
+			rule += "," + pg
+		}
+		_, pos := position.GetCurrentOption()
+		commit(func(c *mihomotui.Config) {
+			if pos == "后置" {
+				c.PostCustomRules = append(c.PostCustomRules, rule)
+			} else {
+				c.PreCustomRules = append(c.PreCustomRules, rule)
 			}
-			cfg = mihomotui.GlobalConfig()
+		})
+		input.SetText("")
+	})
+	refresh()
+	return tview.NewFlex().SetDirection(tview.FlexRow).AddItem(tview.NewFlex().AddItem(input, 0, 3, true).AddItem(policy, 14, 0, false).AddItem(position, 12, 0, false).AddItem(add, 8, 0, false), 3, 0, false).AddItem(list, 0, 1, false)
+}
+
+// newBuiltInRulesPage exposes enabled state, priority and editable built-in settings.
+// Flex itself is not scrollable, so cards are explicitly paginated to keep every rule reachable.
+func newBuiltInRulesPage(app *tview.Application, pages *tview.Pages) tview.Primitive {
+	// 每个卡片占 4 行；实际每页数由页面可用高度在 Draw 时计算。
+	perPage := 1
+	lastHeight := 0
+	list := tview.NewFlex().SetDirection(tview.FlexRow)
+	restoreAll := tview.NewButton("恢复全部默认")
+	prev := tview.NewButton("上一页")
+	next := tview.NewButton("下一页")
+	pageInfo := tview.NewTextView().SetTextAlign(tview.AlignCenter)
+	currentPage := 0
+	refresh := func() {}
+	commit := func(change func(*mihomotui.Config)) {
+		go func() {
+			_, err := mihomotui.MutateServerConfig(change)
 			app.QueueUpdateDraw(func() {
-				ruleInput.SetText("")
-				refreshList()
-				ShowAlertModal(app, pages, "添加成功", fmt.Sprintf("规则: %s", rule))
+				if err != nil {
+					ShowAlertModal(app, pages, "保存失败", err.Error())
+					return
+				}
+				refresh()
 			})
 		}()
+	}
+	refresh = func() {
+		cfg := mihomotui.GlobalConfig()
+		totalPages := max((len(cfg.BuiltInRules)+perPage-1)/perPage, 1)
+		if currentPage >= totalPages {
+			currentPage = totalPages - 1
+		}
+		start, end := currentPage*perPage, min((currentPage+1)*perPage, len(cfg.BuiltInRules))
+		list.Clear()
+		for i := start; i < end; i++ {
+			idx, e := i, cfg.BuiltInRules[i]
+			state := "已启用"
+			if !e.Enabled {
+				state = "已禁用"
+			}
+			summary := e.Rule
+			if e.Kind == mihomotui.BuiltInRuleProvider {
+				summary = fmt.Sprintf("%s → %s", e.URL, e.ProxyGroup)
+			}
+			if e.Kind == mihomotui.BuiltInRuleMatch {
+				summary = "MATCH," + e.ProxyGroup
+			}
+			text := tview.NewTextView().SetDynamicColors(true).SetText(fmt.Sprintf("[%s] %s · %s\n%s", state, e.Name, e.Kind, summary))
+			toggle, edit, reset := tview.NewButton("启用/禁用"), tview.NewButton("编辑"), tview.NewButton("恢复")
+			up, down := tview.NewButton("↑"), tview.NewButton("↓")
+			if e.Kind == mihomotui.BuiltInRuleMatch {
+				toggle.SetDisabled(true)
+				up.SetDisabled(true)
+				down.SetDisabled(true)
+			}
+			toggle.SetSelectedFunc(func() {
+				commit(func(c *mihomotui.Config) { c.BuiltInRules[idx].Enabled = !c.BuiltInRules[idx].Enabled })
+			})
+			reset.SetSelectedFunc(func() {
+				commit(func(c *mihomotui.Config) {
+					for _, v := range mihomotui.DefaultBuiltInRules() {
+						if v.ID == e.ID {
+							c.BuiltInRules[idx] = v
+							break
+						}
+					}
+					for n := range c.BuiltInRules {
+						c.BuiltInRules[n].Order = n
+					}
+				})
+			})
+			move := func(delta int) {
+				commit(func(c *mihomotui.Config) {
+					j := idx + delta
+					if j >= 0 && j < len(c.BuiltInRules)-1 {
+						c.BuiltInRules[idx], c.BuiltInRules[j] = c.BuiltInRules[j], c.BuiltInRules[idx]
+						for n := range c.BuiltInRules {
+							c.BuiltInRules[n].Order = n
+						}
+					}
+				})
+			}
+			up.SetSelectedFunc(func() { move(-1) })
+			down.SetSelectedFunc(func() { move(1) })
+			edit.SetSelectedFunc(func() {
+				showBuiltInRuleEditor(app, pages, e, func(updated mihomotui.BuiltInRule) {
+					commit(func(c *mihomotui.Config) { c.BuiltInRules[idx] = updated })
+				})
+			})
+			buttons := tview.NewFlex().AddItem(toggle, 10, 0, false).AddItem(edit, 6, 0, false).AddItem(up, 3, 0, false).AddItem(down, 3, 0, false).AddItem(reset, 6, 0, false)
+			card := tview.NewFlex().AddItem(text, 0, 1, false).AddItem(buttons, 30, 0, false)
+			card.SetBorder(true)
+			list.AddItem(card, 4, 0, false)
+		}
+		if len(cfg.BuiltInRules) == 0 {
+			list.AddItem(tview.NewTextView().SetText("暂无内置规则，请使用“恢复全部默认”初始化。"), 0, 1, false)
+		}
+		pageInfo.SetText(fmt.Sprintf("第 %d / %d 页 · 共 %d 条", currentPage+1, totalPages, len(cfg.BuiltInRules)))
+		prev.SetDisabled(currentPage == 0)
+		next.SetDisabled(currentPage >= totalPages-1)
+	}
+	prev.SetSelectedFunc(func() {
+		if currentPage > 0 {
+			currentPage--
+			refresh()
+		}
 	})
-
-	page := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(toolbar, 3, 0, false).
-		AddItem(listFlex, 0, 1, false).
-		AddItem(statusBar, 1, 0, false)
-
-	refreshList()
+	next.SetSelectedFunc(func() { currentPage++; refresh() })
+	restoreAll.SetSelectedFunc(func() {
+		ShowConfirmModal(app, pages, "恢复全部默认", "将重置所有内置规则，保留自定义规则。", func() {
+			commit(func(c *mihomotui.Config) {
+				c.BuiltInRules = mihomotui.DefaultBuiltInRules()
+				c.BuiltInRulesInitialized = true
+			})
+			currentPage = 0
+		})
+	})
+	refresh()
+	toolbar := tview.NewFlex().AddItem(restoreAll, 14, 0, true).AddItem(prev, 10, 0, false).AddItem(pageInfo, 0, 1, false).AddItem(next, 10, 0, false)
+	page := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(toolbar, 1, 0, true).AddItem(list, 0, 1, false)
+	page.SetDrawFunc(func(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
+		// 减去工具栏后，以完整卡片为单位分页；窗口尺寸变化后保持当前首条规则可见。
+		available := max(height-1, 4)
+		newPerPage := max(available/4, 1)
+		if newPerPage != perPage || height != lastHeight {
+			first := currentPage * perPage
+			perPage, lastHeight = newPerPage, height
+			currentPage = first / perPage
+			refresh()
+		}
+		return x, y, width, height
+	})
 	return page
+}
+
+func showBuiltInRuleEditor(app *tview.Application, pages *tview.Pages, entry mihomotui.BuiltInRule, done func(mihomotui.BuiltInRule)) {
+	form := tview.NewForm()
+	content := tview.NewInputField().SetLabel("规则 ").SetText(entry.Rule)
+	url := tview.NewInputField().SetLabel("URL ").SetText(entry.URL)
+	behavior := tview.NewInputField().SetLabel("行为 ").SetText(entry.Behavior)
+	format := tview.NewInputField().SetLabel("格式 ").SetText(entry.Format)
+	interval := tview.NewInputField().SetLabel("间隔(秒) ").SetText(fmt.Sprintf("%d", entry.Interval))
+	group := tview.NewInputField().SetLabel("策略 ").SetText(entry.ProxyGroup)
+	if entry.Kind == mihomotui.BuiltInRuleLiteral {
+		form.AddFormItem(content)
+	} else if entry.Kind == mihomotui.BuiltInRuleProvider {
+		form.AddFormItem(url).AddFormItem(behavior).AddFormItem(format).AddFormItem(interval)
+	}
+	form.AddFormItem(group)
+	form.AddButton("保存", func() {
+		entry.Rule, entry.URL, entry.Behavior, entry.Format, entry.ProxyGroup = content.GetText(), url.GetText(), behavior.GetText(), format.GetText(), group.GetText()
+		if _, err := fmt.Sscanf(interval.GetText(), "%d", &entry.Interval); entry.Kind == mihomotui.BuiltInRuleProvider && err != nil {
+			ShowAlertModal(app, pages, "输入错误", "更新间隔必须是正整数")
+			return
+		}
+		pages.RemovePage("builtin_editor")
+		done(entry)
+	}).AddButton("取消", func() { pages.RemovePage("builtin_editor") })
+	form.SetBorder(true).SetTitle("编辑内置规则")
+	pages.RemovePage("builtin_editor")
+	pages.AddPage("builtin_editor", form, true, true)
+	app.SetFocus(form)
 }

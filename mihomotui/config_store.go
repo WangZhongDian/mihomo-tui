@@ -21,6 +21,9 @@ func (c *Config) Clone() Config {
 	}
 	cp.RuleProviderSubscriptions = append([]RuleProviderSubscription(nil), c.RuleProviderSubscriptions...)
 	cp.CustomRules = append([]string(nil), c.CustomRules...)
+	cp.PreCustomRules = append([]string(nil), c.PreCustomRules...)
+	cp.PostCustomRules = append([]string(nil), c.PostCustomRules...)
+	cp.BuiltInRules = append([]BuiltInRule(nil), c.BuiltInRules...)
 	return cp
 }
 

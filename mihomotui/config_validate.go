@@ -201,5 +201,64 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	// ---- 可管理内置规则：MATCH 为固定末尾兜底 ----
+	if !c.BuiltInRulesInitialized {
+		add("内置规则尚未初始化")
+	} else {
+		ids := map[string]bool{}
+		orders := map[int]bool{}
+		matchCount := 0
+		for i, rule := range c.BuiltInRules {
+			if strings.TrimSpace(rule.ID) == "" || ids[rule.ID] {
+				add("内置规则 ID 为空或重复: %q", rule.ID)
+			}
+			ids[rule.ID] = true
+			if rule.Order != i || orders[rule.Order] {
+				add("内置规则排序非法: %q", rule.Name)
+			}
+			orders[rule.Order] = true
+			switch rule.Kind {
+			case BuiltInRuleLiteral:
+				if strings.TrimSpace(rule.Rule) == "" {
+					add("内置规则 %q 内容不能为空", rule.Name)
+				}
+			case BuiltInRuleProvider:
+				if strings.TrimSpace(rule.URL) == "" {
+					add("内置规则订阅 %q 链接不能为空", rule.Name)
+				}
+				if !validRuleProviderBehaviors[rule.Behavior] {
+					add("内置规则订阅 %q behavior 非法", rule.Name)
+				}
+				if !validRuleProviderFormats[rule.Format] {
+					add("内置规则订阅 %q format 非法", rule.Name)
+				}
+				if rule.Interval <= 0 {
+					add("内置规则订阅 %q 更新间隔必须为正数", rule.Name)
+				}
+			case BuiltInRuleMatch:
+				matchCount++
+				if !rule.Enabled {
+					add("MATCH 兜底规则不能禁用")
+				}
+				if i != len(c.BuiltInRules)-1 {
+					add("MATCH 兜底规则必须位于最后")
+				}
+				if strings.TrimSpace(rule.ProxyGroup) == "" {
+					add("MATCH 兜底规则策略不能为空")
+				}
+			default:
+				add("内置规则 %q 类型非法: %q", rule.Name, rule.Kind)
+			}
+		}
+		if matchCount != 1 {
+			add("必须且只能存在一条 MATCH 兜底规则")
+		}
+	}
+	for _, rule := range append(append([]string{}, c.PreCustomRules...), c.PostCustomRules...) {
+		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(rule)), "MATCH,") {
+			add("自定义规则不能包含 MATCH: %q", rule)
+		}
+	}
+
 	return errors.Join(problems...)
 }
