@@ -268,29 +268,39 @@ func newKernelResourceView(app *tview.Application) tview.Primitive {
 }
 
 func newExternalResourceView(app *tview.Application) tview.Primitive {
-	list := tview.NewTable().SetFixed(1, 0)
-	list.SetBorder(true).SetTitle(" GeoIP / GeoSite 外部资源 ")
+	modalHost := tview.NewPages()
+	list := tview.NewTable().SetSelectable(true, true).SetFixed(1, 0)
+	list.SetBorder(true).SetTitle(" GeoIP / GeoSite 外部资源（选择“修改 URL”编辑下载地址） ")
 	status := tview.NewTextView().SetDynamicColors(true)
 	refresh := tview.NewButton(" 刷新状态 ")
 	download := tview.NewButton(" 下载/更新资源 ")
 	var canManage bool
-	load := func() {
+	var cfg *mihomotui.Config
+	var load func()
+	editURL := func(name string) {}
+	load = func() {
 		go func() {
 			client, err := mihomotui.GetIPCClient()
 			if err != nil {
 				app.QueueUpdateDraw(func() { status.SetText(" [red]●[-] IPC 连接失败: " + err.Error()) })
 				return
 			}
-			info, _ := client.IPCGetDaemonInfo()
-			resources, err := client.IPCCheckExternalResources()
+			info, infoErr := client.IPCGetDaemonInfo()
+			current, cfgErr := client.IPCGetConfig()
+			resources, resourceErr := client.IPCCheckExternalResources()
 			app.QueueUpdateDraw(func() {
-				canManage = info != nil && info.CanManageMihomo
+				canManage = infoErr == nil && info != nil && info.CanManageMihomo
 				download.SetDisabled(!canManage)
+				cfg = current
 				list.Clear()
-				list.SetCell(0, 0, tview.NewTableCell("[::b]资源"))
-				list.SetCell(0, 1, tview.NewTableCell("[::b]状态"))
-				list.SetCell(0, 2, tview.NewTableCell("[::b]大小"))
-				if err != nil {
+				for col, text := range []string{"资源", "状态", "大小", "下载 URL", "操作"} {
+					list.SetCell(0, col, tview.NewTableCell("[::b]"+text).SetSelectable(false))
+				}
+				if cfgErr != nil || resourceErr != nil {
+					err := cfgErr
+					if err == nil {
+						err = resourceErr
+					}
 					status.SetText(" [red]●[-] 读取资源状态失败: " + err.Error())
 					return
 				}
@@ -299,13 +309,71 @@ func newExternalResourceView(app *tview.Application) tview.Primitive {
 					if r.Exists {
 						state = "[green]可用[-]"
 					}
+					url := ""
+					if r.Name == "GeoIP" {
+						url = cfg.ExternalResources.GeoIP
+					} else if r.Name == "GeoSite" {
+						url = cfg.ExternalResources.GeoSite
+					}
 					list.SetCell(i+1, 0, tview.NewTableCell(r.Name))
 					list.SetCell(i+1, 1, tview.NewTableCell(state))
 					list.SetCell(i+1, 2, tview.NewTableCell(mihomotui.FormatSize(r.Size)))
+					list.SetCell(i+1, 3, tview.NewTableCell(url))
+					action := tview.NewTableCell("[::b]修改 URL[-]")
+					if canManage {
+						resourceName := r.Name
+						action.SetClickedFunc(func() bool { editURL(resourceName); return true })
+					} else {
+						action.SetText("[gray]仅 root 可修改[-]")
+					}
+					list.SetCell(i+1, 4, action)
 				}
 			})
 		}()
 	}
+	editURL = func(name string) {
+		if !canManage || cfg == nil {
+			return
+		}
+		current := cfg.ExternalResources.GeoIP
+		if name == "GeoSite" {
+			current = cfg.ExternalResources.GeoSite
+		}
+		input := tview.NewInputField().SetLabel("下载 URL: ").SetText(current)
+		form := tview.NewForm().AddFormItem(input)
+		form.AddButton("保存", func() {
+			url := input.GetText()
+			go func() {
+				_, err := mihomotui.MutateServerConfig(func(c *mihomotui.Config) {
+					if name == "GeoIP" {
+						c.ExternalResources.GeoIP = url
+					} else if name == "GeoSite" {
+						c.ExternalResources.GeoSite = url
+					}
+				})
+				app.QueueUpdateDraw(func() {
+					modalHost.RemovePage("external-url-editor")
+					if err != nil {
+						status.SetText(" [red]●[-] 保存失败: " + err.Error())
+						return
+					}
+					status.SetText(" [green]●[-] " + name + " 下载地址已保存")
+					load()
+				})
+			}()
+		}).AddButton("取消", func() { modalHost.RemovePage("external-url-editor"); app.SetFocus(list) })
+		form.SetBorder(true).SetTitle("修改 " + name + " 下载 URL")
+		modalHost.RemovePage("external-url-editor")
+		modalHost.AddPage("external-url-editor", form, true, true)
+		app.SetFocus(form)
+	}
+	list.SetSelectedFunc(func(row, col int) {
+		if row > 0 && col == 4 {
+			if cell := list.GetCell(row, 0); cell != nil {
+				editURL(cell.Text)
+			}
+		}
+	})
 	refresh.SetSelectedFunc(load)
 	download.SetSelectedFunc(func() {
 		if !canManage {
@@ -326,6 +394,8 @@ func newExternalResourceView(app *tview.Application) tview.Primitive {
 			})
 		}()
 	})
+	root := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(list, 0, 1, true).AddItem(status, 1, 0, false).AddItem(tview.NewFlex().AddItem(refresh, 0, 1, true).AddItem(download, 0, 1, false), 1, 0, false)
+	modalHost.AddPage("external-content", root, true, true)
 	load()
-	return tview.NewFlex().SetDirection(tview.FlexRow).AddItem(list, 0, 1, true).AddItem(status, 1, 0, false).AddItem(tview.NewFlex().AddItem(refresh, 0, 1, true).AddItem(download, 0, 1, false), 1, 0, false)
+	return modalHost
 }

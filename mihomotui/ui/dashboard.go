@@ -13,48 +13,90 @@ import (
 	"mihomotui/mihomotui"
 )
 
-// buildSubCardText 从 globalConfig 构建订阅卡片文本
+// buildSubCardText displays the pools currently exposed to the running mihomo configuration.
 func buildSubCardText() string {
 	cfg := mihomotui.GlobalConfig()
-	if len(cfg.Subscriptions) == 0 {
-		return "[" + mihomotui.ColorMuted + "] 暂无订阅\n\n 请前往订阅页面导入[-]"
+	if len(cfg.SubscriptionPools) == 0 {
+		return "[" + mihomotui.ColorMuted + "]暂无运行订阅池\n\n请前往订阅池页面创建或迁移订阅[-]"
 	}
-	var sub mihomotui.SubscriptionMeta
-	if cfg.ActiveSubscription >= 0 && cfg.ActiveSubscription < len(cfg.Subscriptions) {
-		sub = cfg.Subscriptions[cfg.ActiveSubscription]
-	} else {
-		sub = cfg.Subscriptions[0]
+	byID := make(map[string]mihomotui.SubscriptionMeta, len(cfg.Subscriptions))
+	for _, sub := range cfg.Subscriptions {
+		byID[sub.ID] = sub
 	}
-	percent := 0.0
-	if sub.TotalGB > 0 {
-		percent = sub.UsedGB / sub.TotalGB * 100
-	}
-	bar := ProgressBar(mihomotui.ProgressBarWidth, percent)
-	percentText := "—"
-	if sub.TotalGB > 0 {
-		percentText = fmt.Sprintf("%.0f%%", percent)
-	}
-	quota := "[yellow]无法解析有效的订阅元数据[-]"
-	if sub.MetadataAvailable {
-		if sub.RemainingBytes > 0 && sub.TotalBytes == 0 {
-			quota = fmt.Sprintf("剩余: %.2fGB", float64(sub.RemainingBytes)/(1024*1024*1024))
-		} else {
-			quota = fmt.Sprintf("%.2fGB / %.2fGB", sub.UsedGB, sub.TotalGB)
+	var lines []string
+	for _, pool := range cfg.SubscriptionPools {
+		if !pool.Enabled {
+			continue
 		}
-		if sub.ExpireAt != "" {
-			quota += "  到期: " + sub.ExpireAt
+		mode := "主备"
+		if pool.Mode == mihomotui.SubscriptionPoolModeMerge {
+			mode = "合并"
+		}
+		state := "[green]●[-]"
+		if pool.Degraded {
+			state = "[yellow]▲[-]"
+		}
+		lines = append(lines, fmt.Sprintf("%s [::b]%s[-]  (%s)", state, pool.Name, mode))
+		available := 0
+		for _, id := range pool.Members {
+			if sub, ok := byID[id]; ok && sub.CacheFile != "" {
+				available++
+			}
+		}
+		if pool.Mode == mihomotui.SubscriptionPoolModeMerge {
+			lines = append(lines, fmt.Sprintf("  已合并 %d / %d 个可用订阅源", available, len(pool.Members)))
+		} else if _, ok := byID[pool.ActiveMemberID]; !ok {
+			lines = append(lines, "  [yellow]当前活动源缺失[-]")
+		}
+		// 在池摘要下逐行展示成员，方便从首页直接确认参与运行的订阅源健康和额度。
+		for _, id := range pool.Members {
+			sub, ok := byID[id]
+			if !ok {
+				continue
+			}
+			status := "[green]正常[-]"
+			if sub.CacheFile == "" || sub.FailureCount > 0 {
+				status = "[red]异常[-]"
+			}
+			current := ""
+			if pool.Mode != mihomotui.SubscriptionPoolModeMerge && id == pool.ActiveMemberID {
+				current = " [::b](当前)[-]"
+			}
+			line := fmt.Sprintf("  • %s%s · %s", sub.Name, current, status)
+			if remaining := subscriptionRemainingText(sub); remaining != "" {
+				line += " · 剩余 " + remaining
+			}
+			lines = append(lines, line)
+		}
+		if pool.Degraded && pool.LastSwitchReason != "" {
+			lines = append(lines, "  降级: "+pool.LastSwitchReason)
 		}
 	}
-	return fmt.Sprintf(
-		"[%s]  %s[-:-:-]  [订阅]\n\n"+
-			" 来源: %s\n"+
-			" 更新: %s\n"+
-			" 流量: %s\n\n"+
-			" %s\n"+
-			" %s────────────────────",
-		mihomotui.ColorHeader, sub.Name, mihomotui.RedactURL(sub.URL), sub.UpdatedAt,
-		quota, percentText, bar,
-	)
+	if len(lines) == 0 {
+		return "[" + mihomotui.ColorMuted + "]暂无已启用订阅池\n\n请前往订阅池页面启用订阅池[-]"
+	}
+	return strings.Join(lines, "\n")
+}
+
+func subscriptionRemainingText(sub mihomotui.SubscriptionMeta) string {
+	remaining := sub.RemainingBytes
+	if remaining <= 0 && sub.TotalBytes > 0 {
+		remaining = sub.TotalBytes - sub.UploadBytes - sub.DownloadBytes
+	}
+	if remaining <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%.2fGB", float64(remaining)/(1024*1024*1024))
+}
+
+func subscriptionQuotaText(sub mihomotui.SubscriptionMeta) string {
+	if sub.RemainingBytes > 0 && sub.TotalBytes == 0 {
+		return fmt.Sprintf("剩余 %.2fGB", float64(sub.RemainingBytes)/(1024*1024*1024))
+	}
+	if sub.TotalGB > 0 {
+		return fmt.Sprintf("%.2fGB / %.2fGB", sub.UsedGB, sub.TotalGB)
+	}
+	return "无法解析有效的订阅元数据"
 }
 
 // NewDashboard 创建首页仪表盘页面
@@ -66,7 +108,7 @@ func NewDashboard(app *tview.Application) (Page, func()) {
 		SetText(buildSubCardText()).
 		SetDynamicColors(true)
 	subCard.SetBorder(true).
-		SetTitle(" 订阅 ").
+		SetTitle(" 当前运行订阅池 ").
 		SetTitleAlign(tview.AlignLeft)
 
 	// 当前节点卡片（动态更新）
@@ -321,11 +363,13 @@ func NewDashboard(app *tview.Application) (Page, func()) {
 				return
 			case <-ticker.C:
 				updateNodeCard()
+				app.QueueUpdateDraw(func() { subCard.SetText(buildSubCardText()) })
 			}
 		}
 	}()
 
 	refresh := func() {
+		subCard.SetText(buildSubCardText())
 		refreshNetCard()
 		refreshModeCard()
 		updateNodeCard()

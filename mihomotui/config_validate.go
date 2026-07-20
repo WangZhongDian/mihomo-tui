@@ -93,6 +93,14 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	// ---- 外部资源下载地址 ----
+	for _, resource := range []struct{ name, rawURL string }{{"GeoIP", c.ExternalResources.GeoIP}, {"GeoSite", c.ExternalResources.GeoSite}} {
+		u, err := url.Parse(strings.TrimSpace(resource.rawURL))
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			add("外部资源 %s 下载地址必须是合法 http/https URL: %q", resource.name, resource.rawURL)
+		}
+	}
+
 	// ---- 代理模式与默认策略组 ----
 	if !validProxyModes[c.ProxyMode] {
 		add("代理模式非法: %q（可选 rule/global/direct）", c.ProxyMode)
