@@ -181,6 +181,7 @@ func (d *Daemon) router() http.Handler {
 	mux.HandleFunc("/api/v1/mihomo/restart", d.handleMihomoRestart)
 	mux.HandleFunc("/api/v1/mihomo/versions", d.handleMihomoVersions)
 	mux.HandleFunc("/api/v1/mihomo/versions/refresh", d.handleMihomoVersionsRefresh)
+	mux.HandleFunc("/api/v1/mihomo/versions/manual-import", d.handleManualMihomoImport)
 	mux.HandleFunc("/api/v1/mihomo/versions/", d.handleMihomoVersionDetail)
 	mux.HandleFunc("/api/v1/mihomo/upgrade", d.handleMihomoUpgrade)
 	mux.HandleFunc("/api/v1/mihomo/upgrade/progress", d.handleMihomoUpgradeProgress)
@@ -188,6 +189,7 @@ func (d *Daemon) router() http.Handler {
 	mux.HandleFunc("/api/v1/mihomo/latest-version", d.handleMihomoLatestVersion)
 	mux.HandleFunc("/api/v1/mihomo/external-resources", d.handleExternalResources)
 	mux.HandleFunc("/api/v1/mihomo/external-resources/download", d.handleDownloadExternalResources)
+	mux.HandleFunc("/api/v1/mihomo/external-resources/", d.handleExternalResourceDetail)
 
 	// 心跳
 	mux.HandleFunc("/api/v1/ping", d.handlePing)
@@ -240,9 +242,10 @@ func (d *Daemon) handleDaemonInfo(w http.ResponseWriter, r *http.Request) {
 		launchMode = "standalone"
 	}
 	info := DaemonInfo{
-		LaunchMode:      launchMode,
-		IsRoot:          os.Geteuid() == 0,
-		CanManageMihomo: requestIPCRole(r) == ipcRoleAdmin,
+		LaunchMode:         launchMode,
+		IsRoot:             os.Geteuid() == 0,
+		CanManageMihomo:    requestIPCRole(r) == ipcRoleAdmin,
+		CanManageResources: requestIPCRole(r) >= ipcRoleOperator,
 	}
 	writeJSON(w, http.StatusOK, ok(info))
 }

@@ -34,6 +34,7 @@ type MihomoVersionInfo struct {
 	Source      string `yaml:"source,omitempty" json:"source,omitempty"`
 	AssetURL    string `yaml:"asset_url,omitempty" json:"asset_url,omitempty"`
 	AssetName   string `yaml:"asset_name,omitempty" json:"asset_name,omitempty"`
+	Manual      bool   `yaml:"manual,omitempty" json:"manual,omitempty"`
 }
 
 type githubRelease struct {
@@ -62,6 +63,17 @@ func mihomoVersionBinaryPath(version string) string {
 		name += ".exe"
 	}
 	return filepath.Join(GetConfigDir(), "bin", mihomoVersionsDirName, "v"+strings.TrimPrefix(version, "v"), name)
+}
+
+// ManualMihomoImportPath is the only accepted manual kernel import location.
+// The daemon later validates and atomically moves this file into a version
+// repository directory; IPC callers never provide an arbitrary source path.
+func ManualMihomoImportPath() string {
+	name := mihomoBinaryName
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	return filepath.Join(GetConfigDir(), "bin", "manual", name)
 }
 
 func normalizeMihomoVersion(v string) string { return strings.TrimPrefix(strings.TrimSpace(v), "v") }
@@ -382,9 +394,14 @@ func downloadMihomoVersion(info MihomoVersionInfo, progress func(DownloadProgres
 			return "", err
 		}
 	}
-	if _, err = exec.Command(tmp, "-v").CombinedOutput(); err != nil {
+	gotVersion, verifyErr := getMihomoBinaryVersion(tmp)
+	if verifyErr != nil {
 		_ = os.Remove(tmp)
-		return "", fmt.Errorf("下载的内核无法执行: %w", err)
+		return "", fmt.Errorf("下载的内核无法执行: %w", verifyErr)
+	}
+	if gotVersion != normalizeMihomoVersion(info.Version) {
+		_ = os.Remove(tmp)
+		return "", fmt.Errorf("下载的内核版本不匹配：期望 v%s，实际 v%s", normalizeMihomoVersion(info.Version), gotVersion)
 	}
 	if err = os.Rename(tmp, target); err != nil {
 		_ = os.Remove(tmp)
@@ -442,6 +459,74 @@ func extractMihomoZip(src, dst string) error {
 	return fmt.Errorf("压缩包中未找到 mihomo 可执行文件")
 }
 
+// ImportManualMihomoBinary registers a manually placed executable from the
+// fixed private import directory. The file must not be a symlink and is moved
+// only after its actual version has been verified.
+func ImportManualMihomoBinary() (MihomoVersionInfo, error) {
+	mihomoVersionOpMu.Lock()
+	defer mihomoVersionOpMu.Unlock()
+
+	manualPath := ManualMihomoImportPath()
+	if _, err := validateManagedExternalFile(manualPath, false); err != nil {
+		return MihomoVersionInfo{}, fmt.Errorf("扫描手动 mihomo 内核失败（%s）: %w", manualPath, err)
+	}
+	if err := os.Chmod(manualPath, 0700); err != nil {
+		return MihomoVersionInfo{}, fmt.Errorf("收紧手动 mihomo 内核权限失败: %w", err)
+	}
+	version, err := getMihomoBinaryVersion(manualPath)
+	if err != nil {
+		return MihomoVersionInfo{}, fmt.Errorf("验证手动 mihomo 内核失败: %w", err)
+	}
+	target := mihomoVersionBinaryPath(version)
+	if _, err := os.Lstat(target); err == nil {
+		return MihomoVersionInfo{}, fmt.Errorf("版本 v%s 已存在，未覆盖已安装内核", version)
+	} else if !os.IsNotExist(err) {
+		return MihomoVersionInfo{}, fmt.Errorf("检查版本目录失败: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+		return MihomoVersionInfo{}, fmt.Errorf("创建版本目录失败: %w", err)
+	}
+	if err := os.Chmod(filepath.Dir(target), 0700); err != nil {
+		return MihomoVersionInfo{}, fmt.Errorf("收紧版本目录权限失败: %w", err)
+	}
+	if err := os.Rename(manualPath, target); err != nil {
+		return MihomoVersionInfo{}, fmt.Errorf("导入手动 mihomo 内核失败: %w", err)
+	}
+	if err := os.Chmod(target, 0700); err != nil {
+		_ = os.Remove(target)
+		return MihomoVersionInfo{}, fmt.Errorf("收紧导入内核权限失败: %w", err)
+	}
+
+	var imported MihomoVersionInfo
+	_, err = UpdateGlobalConfig(func(c *Config) error {
+		found := false
+		for i := range c.MihomoVersions {
+			if normalizeMihomoVersion(c.MihomoVersions[i].Version) != version {
+				continue
+			}
+			c.MihomoVersions[i].Manual = true
+			imported = c.MihomoVersions[i]
+			found = true
+			break
+		}
+		if !found {
+			imported = MihomoVersionInfo{Version: version, Source: "本地手动导入", Manual: true}
+			c.MihomoVersions = append(c.MihomoVersions, imported)
+		}
+		return nil
+	})
+	if err != nil {
+		_ = os.Remove(target)
+		return MihomoVersionInfo{}, fmt.Errorf("保存手动内核版本信息失败: %w", err)
+	}
+	for _, info := range MihomoVersionList() {
+		if info.Version == version {
+			return info, nil
+		}
+	}
+	return imported, nil
+}
+
 func DownloadMihomoVersionWithProgress(version string, progress func(DownloadProgress)) (string, error) {
 	mihomoVersionOpMu.Lock()
 	defer mihomoVersionOpMu.Unlock()
@@ -470,8 +555,12 @@ func ActivateMihomoVersion(version string) error {
 	if err != nil {
 		return fmt.Errorf("验证版本 v%s 失败: %w", v, err)
 	}
-	if got := parseVersion(string(out)); got == "" {
+	got := normalizeMihomoVersion(parseVersion(string(out)))
+	if got == "" {
 		return fmt.Errorf("无法验证版本 v%s", v)
+	}
+	if got != v {
+		return fmt.Errorf("内核版本不匹配：选择 v%s，实际 v%s", v, got)
 	}
 	_, err = UpdateGlobalConfig(func(c *Config) error { c.MihomoActiveVersion = v; c.MihomoBinaryPath = p; return nil })
 	return err
@@ -490,7 +579,24 @@ func DeleteMihomoVersion(version string) error {
 		}
 		return err
 	}
-	return os.RemoveAll(filepath.Dir(p))
+	if err := os.RemoveAll(filepath.Dir(p)); err != nil {
+		return err
+	}
+	_, err := UpdateGlobalConfig(func(c *Config) error {
+		for i := range c.MihomoVersions {
+			if normalizeMihomoVersion(c.MihomoVersions[i].Version) != v || !c.MihomoVersions[i].Manual {
+				continue
+			}
+			if c.MihomoVersions[i].AssetURL == "" {
+				c.MihomoVersions = append(c.MihomoVersions[:i], c.MihomoVersions[i+1:]...)
+			} else {
+				c.MihomoVersions[i].Manual = false
+			}
+			break
+		}
+		return nil
+	})
+	return err
 }
 
 func latestStableMihomoVersion() (MihomoVersionInfo, error) {

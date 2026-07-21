@@ -2,13 +2,21 @@
 
 package mihomotui
 
-import "fmt"
+import (
+	"fmt"
+	"io"
+)
 
 // SetupTUNRouting 非 Linux 平台为空实现
 func SetupTUNRouting() error { return nil }
 
 // RestoreTUNRouting 非 Linux 平台为空实现
 func RestoreTUNRouting() error { return nil }
+
+// DebugTUNRouting 在非 Linux 平台不支持。
+func DebugTUNRouting(io.Writer, ...bool) error {
+	return fmt.Errorf("当前平台不支持 TUN 路由调试")
+}
 
 // DescribeTUNRouting 在非 Linux 平台不支持。
 func DescribeTUNRouting() ([]string, error) {

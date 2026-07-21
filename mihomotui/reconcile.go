@@ -102,7 +102,8 @@ func (d *Daemon) runReconcile(req reconcileRequest) ApplyReport {
 		return ApplyReport{Applied: false, Stage: "generate", Err: fmt.Sprintf("生成 mihomo 配置失败: %v", err)}
 	}
 
-	// 2. mihomo 运行中时热重载；热重载失败则重启
+	// 2. 从关闭切到开启 TUN 时，必须在热重载让 mihomo 接管流量前先
+	// 安装回包修复。失败则不热重载，保持旧的安全运行状态。
 	d.mu.Lock()
 	d.mihomoAPI = NewMihomoAPIFromConfig()
 	api := d.mihomoAPI
@@ -110,6 +111,11 @@ func (d *Daemon) runReconcile(req reconcileRequest) ApplyReport {
 	d.mu.Unlock()
 
 	running := process != nil && process.IsRunning()
+	if req.syncTUN && req.newTUN && running {
+		if err := SetupTUNRouting(); err != nil {
+			return ApplyReport{Applied: false, Stage: "tun", Err: fmt.Sprintf("TUN 路由修复预检/设置失败，未启用 TUN: %v", err)}
+		}
+	}
 	if running {
 		if api == nil {
 			return ApplyReport{Applied: false, Stage: "reload", Err: "mihomo API 客户端未初始化"}
@@ -123,16 +129,10 @@ func (d *Daemon) runReconcile(req reconcileRequest) ApplyReport {
 		}
 	}
 
-	// 3. TUN 状态变化且 mihomo 运行中时同步路由修复规则
-	if req.syncTUN && running {
-		if req.newTUN {
-			if err := SetupTUNRouting(); err != nil {
-				return ApplyReport{Applied: false, Stage: "tun", Err: fmt.Sprintf("TUN 路由修复设置失败: %v", err)}
-			}
-		} else {
-			if err := RestoreTUNRouting(); err != nil {
-				return ApplyReport{Applied: false, Stage: "tun", Err: fmt.Sprintf("TUN 路由规则清理失败: %v", err)}
-			}
+	// 3. 关闭 TUN 时，配置已成功热重载/重启为非 TUN 模式后再清理项目规则。
+	if req.syncTUN && !req.newTUN && running {
+		if err := RestoreTUNRouting(); err != nil {
+			return ApplyReport{Applied: false, Stage: "tun", Err: fmt.Sprintf("TUN 路由规则清理失败: %v", err)}
 		}
 	}
 

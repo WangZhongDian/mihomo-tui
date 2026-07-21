@@ -126,6 +126,18 @@ func (p *MihomoProcess) Start() error {
 		return fmt.Errorf("mihomo 配置文件不存在: %s，请先在订阅页面应用订阅生成配置", configPath)
 	}
 
+	// 必须先完成回包路由预检和安装，再启动会接管默认路由的 mihomo。
+	// 失败时拒绝启动，避免云服务器进入 TUN 已启用但 Docker/宿主机回包
+	// 没有保护的危险状态。
+	tunRoutingInstalled := false
+	if cfg.System.TUN {
+		if err := SetupTUNRouting(); err != nil {
+			p.mu.Unlock()
+			return fmt.Errorf("TUN 路由修复预检/设置失败，已取消启动 mihomo: %w", err)
+		}
+		tunRoutingInstalled = true
+	}
+
 	output := newCappedBuffer(processOutputLimit)
 	cmd := exec.Command(binary, "-d", mihomoHome, "-f", configPath)
 	cmd.Stdout = output
@@ -136,6 +148,11 @@ func (p *MihomoProcess) Start() error {
 
 	if err := cmd.Start(); err != nil {
 		p.mu.Unlock()
+		if tunRoutingInstalled {
+			if cleanupErr := RestoreTUNRouting(); cleanupErr != nil {
+				return errors.Join(fmt.Errorf("启动 mihomo 失败: %w", err), fmt.Errorf("回滚 TUN 路由修复失败: %w", cleanupErr))
+			}
+		}
 		return fmt.Errorf("启动 mihomo 失败: %w", err)
 	}
 
@@ -154,12 +171,19 @@ func (p *MihomoProcess) Start() error {
 		p.running = false
 		p.pid = 0
 		p.mu.Unlock()
-		exited <- err
 		if err != nil {
 			Errorf("mihomo 进程退出: %v", err)
 		} else {
 			Infof("mihomo 进程正常退出")
 		}
+		// 正常停止、崩溃和启动存活确认失败都会经此路径清理。先清理再
+		// 通知 Stop/Start，防止调用方与清理流程并发操作同一组规则。
+		if tunRoutingInstalled {
+			if cleanupErr := RestoreTUNRouting(); cleanupErr != nil {
+				Warnf("mihomo 退出后清理 TUN 路由规则失败: %v", cleanupErr)
+			}
+		}
+		exited <- err
 	}()
 
 	// 等待存活确认窗口：窗口内退出视为启动失败，附带进程输出便于诊断；
@@ -191,12 +215,6 @@ func (p *MihomoProcess) Start() error {
 
 	Infof("mihomo 已启动: pid=%d, dir=%s", cmd.Process.Pid, mihomoDir)
 
-	// TUN 模式下设置路由修复规则，防止外部无法访问服务器开放端口
-	if cfg.System.TUN {
-		if err := SetupTUNRouting(); err != nil {
-			Warnf("TUN 路由修复设置失败（外部入站连接可能受影响）: %v", err)
-		}
-	}
 	return nil
 }
 
@@ -257,10 +275,6 @@ func (p *MihomoProcess) Stop() error {
 		}
 	}
 
-	// 清理 TUN 路由修复规则，恢复系统网络状态
-	if err := RestoreTUNRouting(); err != nil {
-		Warnf("TUN 路由规则清理失败: %v", err)
-	}
 	return nil
 }
 

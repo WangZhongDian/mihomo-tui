@@ -79,9 +79,10 @@ type ProxyDelayResponse struct {
 
 // DaemonInfo 守护进程信息
 type DaemonInfo struct {
-	LaunchMode      string `json:"launch_mode"` // embedded 或 standalone
-	IsRoot          bool   `json:"is_root"`
-	CanManageMihomo bool   `json:"can_manage_mihomo"` // 当前 IPC 调用方是否可修改内核版本
+	LaunchMode         string `json:"launch_mode"` // embedded 或 standalone
+	IsRoot             bool   `json:"is_root"`
+	CanManageMihomo    bool   `json:"can_manage_mihomo"`    // 当前 IPC 调用方是否可修改内核版本
+	CanManageResources bool   `json:"can_manage_resources"` // 当前 IPC 调用方是否可修改外部资源
 }
 
 // UpgradeProgress mihomo 内核升级进度
@@ -106,8 +107,9 @@ type RuleProviderImportRequest struct {
 
 // MihomoVersionsResponse is the cached release catalog plus its refresh metadata.
 type MihomoVersionsResponse struct {
-	Versions  []MihomoVersionInfo `json:"versions"`
-	CheckedAt string              `json:"checked_at,omitempty"`
-	Source    string              `json:"source,omitempty"`
-	LastError string              `json:"last_error,omitempty"`
+	Versions         []MihomoVersionInfo `json:"versions"`
+	CheckedAt        string              `json:"checked_at,omitempty"`
+	Source           string              `json:"source,omitempty"`
+	LastError        string              `json:"last_error,omitempty"`
+	ManualImportPath string              `json:"manual_import_path,omitempty"`
 }

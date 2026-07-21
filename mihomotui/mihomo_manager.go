@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strings"
 	"time"
 )
 
@@ -256,93 +255,4 @@ func extractGzip(src, dst string) error {
 
 	_, err = io.Copy(out, gr)
 	return err
-}
-
-// ExternalResourceInfo 外部资源文件信息
-type ExternalResourceInfo struct {
-	Name    string
-	Path    string
-	Exists  bool
-	Size    int64
-	ModTime time.Time
-}
-
-// FormatSize 格式化文件大小
-func FormatSize(size int64) string {
-	const unit = 1024
-	if size < unit {
-		return fmt.Sprintf("%d B", size)
-	}
-	div, exp := int64(unit), 0
-	for n := size / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	units := []string{"KB", "MB", "GB", "TB"}
-	return fmt.Sprintf("%.1f %s", float64(size)/float64(div), units[exp])
-}
-
-// CheckExternalResources 检查 mihomo 工作目录下的外部资源文件（大小写不敏感）
-func CheckExternalResources() []ExternalResourceInfo {
-	mihomoDir := filepath.Join(GetConfigDir(), "mihomo")
-	targets := []string{"geoip.dat", "geosite.dat"}
-
-	// 读取目录下所有文件，建立大小写不敏感的文件名映射
-	entries, _ := os.ReadDir(mihomoDir)
-	fileMap := make(map[string]os.FileInfo) // key: lower(name)
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		info, _ := entry.Info()
-		fileMap[strings.ToLower(entry.Name())] = info
-	}
-
-	var resources []ExternalResourceInfo
-	for _, name := range targets {
-		info := ExternalResourceInfo{Name: name}
-		if fi, ok := fileMap[strings.ToLower(name)]; ok {
-			info.Exists = true
-			info.Size = fi.Size()
-			info.ModTime = fi.ModTime()
-			info.Path = filepath.Join(mihomoDir, fi.Name())
-		} else {
-			info.Path = filepath.Join(mihomoDir, name)
-		}
-		resources = append(resources, info)
-	}
-	return resources
-}
-
-// DownloadExternalResources 下载外部资源文件到 mihomo 工作目录
-func DownloadExternalResources() error {
-	cfg := GlobalConfig()
-	mihomoDir := filepath.Join(GetConfigDir(), "mihomo")
-	if err := os.MkdirAll(mihomoDir, 0700); err != nil {
-		return fmt.Errorf("创建工作目录失败: %w", err)
-	}
-	if err := os.Chmod(mihomoDir, 0700); err != nil {
-		return fmt.Errorf("收紧工作目录权限失败: %w", err)
-	}
-
-	resources := []struct {
-		name string
-		url  string
-	}{
-		{"geoip.dat", cfg.ExternalResources.GeoIP},
-		{"geosite.dat", cfg.ExternalResources.GeoSite},
-	}
-
-	for _, r := range resources {
-		if r.url == "" {
-			continue
-		}
-		Infof("开始下载外部资源: %s -> %s", r.name, RedactURL(r.url))
-		dst := filepath.Join(mihomoDir, r.name)
-		if err := downloadFile(r.url, dst, nil); err != nil {
-			return fmt.Errorf("下载 %s 失败: %w", r.name, err)
-		}
-		Infof("外部资源下载完成: %s", dst)
-	}
-	return nil
 }

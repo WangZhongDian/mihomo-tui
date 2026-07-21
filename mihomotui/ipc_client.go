@@ -478,6 +478,36 @@ func (c *IPCClient) IPCDownloadExternalResources() error {
 	return err
 }
 
+// IPCSetExternalResourceURL saves one managed Geo resource URL.
+func (c *IPCClient) IPCSetExternalResourceURL(key, rawURL string) error {
+	body, err := json.Marshal(map[string]string{"url": rawURL})
+	if err != nil {
+		return err
+	}
+	_, err = c.requestJSON(http.MethodPut, "/api/v1/mihomo/external-resources/"+url.PathEscape(key), body, nil)
+	return err
+}
+
+// IPCUpdateExternalResource force-downloads one managed Geo resource.
+func (c *IPCClient) IPCUpdateExternalResource(key string) (*ExternalResourceInfo, error) {
+	resp, err := c.requestJSON(http.MethodPost, "/api/v1/mihomo/external-resources/"+url.PathEscape(key), nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	info, err := unmarshalData[ExternalResourceInfo](resp)
+	return &info, err
+}
+
+// IPCScanExternalResource validates a manually placed fixed-path Geo resource.
+func (c *IPCClient) IPCScanExternalResource(key string) (*ExternalResourceInfo, error) {
+	resp, err := c.requestJSON(http.MethodPost, "/api/v1/mihomo/external-resources/"+url.PathEscape(key)+"/scan", nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	info, err := unmarshalData[ExternalResourceInfo](resp)
+	return &info, err
+}
+
 // IPCShutdownDaemon 请求守护进程停止自身
 func (c *IPCClient) IPCShutdownDaemon() error {
 	_, err := c.requestJSON(http.MethodPost, "/api/v1/daemon/shutdown", nil, nil)
@@ -667,4 +697,14 @@ func (c *IPCClient) IPCActivateMihomoVersion(version string) error {
 func (c *IPCClient) IPCDeleteMihomoVersion(version string) error {
 	_, err := c.requestJSON(http.MethodDelete, "/api/v1/mihomo/versions/"+url.PathEscape(version), nil, nil)
 	return err
+}
+
+// IPCImportManualMihomo validates the fixed manual import file and registers it.
+func (c *IPCClient) IPCImportManualMihomo() (*MihomoVersionInfo, error) {
+	resp, err := c.requestJSON(http.MethodPost, "/api/v1/mihomo/versions/manual-import", nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	info, err := unmarshalData[MihomoVersionInfo](resp)
+	return &info, err
 }
