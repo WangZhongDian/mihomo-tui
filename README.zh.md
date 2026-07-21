@@ -81,6 +81,7 @@ mihomo-tui — mihomo 终端 UI 与守护进程管理工具
   mihomo-tui grant_operator <用户名>             授予普通用户 IPC 管理权限（需 root）
   mihomo-tui cleanup                             清理系统代理和 TUN 环境（需 root）
   mihomo-tui tun_diagnose                        输出 TUN 路由 dry-run 计划（不修改系统）
+  mihomo-tui tun_debug [--apply]                 输出 TUN 预检；仅 --apply 时重建修复（需 root）
   mihomo-tui version                             显示版本信息
   mihomo-tui help                                显示帮助
 
@@ -104,7 +105,13 @@ mihomo-tui subscription import --url 'https://example.com/sub?token=***' --name 
 mihomo-tui subscription import --file ./subscription.yaml
 cat subscription.txt | mihomo-tui subscription import --stdin --name 离线订阅
 sudo mihomo-tui grant_operator <用户名>
+mihomo-tui tun_debug
+sudo mihomo-tui tun_debug --apply | tee tun-debug.log
 ```
+
+`tun_diagnose` 与不带参数的 `tun_debug` 均为只读诊断：显示出口接口、项目状态、其他活跃 TUN 冲突、IPv6 风险和拟执行命令，不会修改系统网络。只有 `sudo mihomo-tui tun_debug --apply` 才会清理并重建**项目所有**的 TUN 策略路由与 nftables/iptables-legacy 规则。
+
+启用 TUN 时，mihomo-tui 会在启动内核前安装 IPv4 回包保护；若检测到 Clash Verge、其他 mihomo 或 sing-box 已有活跃 TUN 默认路由，将拒绝并发启用，避免破坏 Docker、SSH 和 VPN 回包。该回包修复仅覆盖 IPv4；检测到 IPv6 默认路由时会提示风险。
 
 
 ### 常用命令

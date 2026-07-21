@@ -76,7 +76,6 @@ func RunVersion() {
 	fmt.Printf("mihomo-tui %s\n", mihomotui.Version)
 }
 
-// RunCleanup 清理系统代理环境变量和 TUN 路由规则
 // RunTUNDiagnose 输出 TUN 路由修复的 dry-run 计划，不会修改系统网络。
 func RunTUNDiagnose() {
 	commands, err := mihomotui.DescribeTUNRouting()
@@ -90,6 +89,41 @@ func RunTUNDiagnose() {
 	}
 }
 
+// RunTUNDebug 输出 TUN 预检和拟执行命令；只有 --apply 才会真实修改网络状态。
+func RunTUNDebug(dir string, args []string) {
+	flags := flag.NewFlagSet("tun_debug", flag.ExitOnError)
+	apply := flags.Bool("apply", false, "执行 TUN 路由修复（默认仅只读诊断）")
+	flags.Parse(args)
+	if *apply && os.Geteuid() != 0 {
+		fmt.Println("TUN 路由修复应用需要 root 权限，请使用 sudo mihomo-tui tun_debug --apply")
+		os.Exit(1)
+	}
+	if *apply {
+		if dir != "" {
+			mihomotui.SetCustomConfigDir(dir)
+		} else if mihomotui.GetCustomConfigDir() == "" {
+			mihomotui.SetCustomConfigDir("/var/lib/mihomo-tui")
+		}
+	}
+	if err := mihomotui.InitConsoleLogger(os.Stdout, "debug"); err != nil {
+		fmt.Printf("初始化 stdout 调试日志失败: %v\n", err)
+		os.Exit(1)
+	}
+	if *apply {
+		fmt.Println("mihomo-tui TUN 路由调试（将实际修改项目路由和防火墙）：")
+	} else {
+		fmt.Println("mihomo-tui TUN 路由调试（只读；未修改系统网络）：")
+	}
+	if err := mihomotui.DebugTUNRouting(os.Stdout, *apply); err != nil {
+		fmt.Printf("TUN 路由调试失败: %v\n", err)
+		os.Exit(1)
+	}
+	if *apply {
+		fmt.Println("✅ TUN 路由修复调试完成，规则保持启用状态")
+	}
+}
+
+// RunCleanup 清理系统代理环境变量和 TUN 路由规则。
 func RunCleanup() {
 	if os.Geteuid() == 0 && mihomotui.GetCustomConfigDir() == "" {
 		mihomotui.SetCustomConfigDir("/var/lib/mihomo-tui")

@@ -2,6 +2,7 @@ package mihomotui
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -115,6 +116,23 @@ func InitLogger(dir, level string) error {
 	logger = slog.New(handler)
 
 	logger.Info("日志系统初始化完成", "level", level, "dir", dir)
+	return nil
+}
+
+// InitConsoleLogger 将后续结构化日志直接写入指定流，不创建日志文件。
+// 主要用于 tun_debug 等一次性诊断命令；daemon 和 TUI 仍使用 InitLogger。
+func InitConsoleLogger(w io.Writer, level string) error {
+	if w == nil {
+		return fmt.Errorf("日志输出流不能为空")
+	}
+	logMu.Lock()
+	defer logMu.Unlock()
+	if logW != nil && logW.file != nil {
+		_ = logW.file.Close()
+	}
+	logW = nil
+	logger = slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: parseSlogLevel(level)}))
+	logger.Info("日志已切换到控制台", "level", level)
 	return nil
 }
 

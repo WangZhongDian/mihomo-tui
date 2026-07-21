@@ -81,6 +81,7 @@ Usage:
   mihomo-tui grant_operator <user>               Grant a regular user IPC management access (root required)
   mihomo-tui cleanup                             Clean system-proxy and TUN environment (root required)
   mihomo-tui tun_diagnose                        Print a TUN routing dry-run plan; makes no changes
+  mihomo-tui tun_debug [--apply]                 Print TUN preflight; rebuild rules only with --apply (root required)
   mihomo-tui version                             Show version information
   mihomo-tui help                                Show help
 
@@ -104,7 +105,13 @@ mihomo-tui subscription import --url 'https://example.com/sub?token=***' --name 
 mihomo-tui subscription import --file ./subscription.yaml
 cat subscription.txt | mihomo-tui subscription import --stdin --name offline-subscription
 sudo mihomo-tui grant_operator <user>
+mihomo-tui tun_debug
+sudo mihomo-tui tun_debug --apply | tee tun-debug.log
 ```
+
+`tun_diagnose` and `tun_debug` without arguments are read-only diagnostics: they report the egress interface, project state, active-TUN conflicts, IPv6 risk, and the planned commands without changing networking. Only `sudo mihomo-tui tun_debug --apply` removes and rebuilds **project-owned** TUN policy routes and nftables/iptables-legacy rules.
+
+When TUN is enabled, mihomo-tui installs IPv4 return-path protection before starting the core. It refuses concurrent activation when Clash Verge, another mihomo instance, or sing-box already owns an active TUN default route, protecting Docker, SSH, and VPN return traffic. The repair currently covers IPv4 only and warns when an IPv6 default route exists.
 
 
 ### Common Commands
