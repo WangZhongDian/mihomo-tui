@@ -225,7 +225,7 @@ func isIPCRootOnlyRequest(r *http.Request) bool {
 	if cleanPath == "/api/v1/mihomo/upgrade" && r.Method != http.MethodGet {
 		return true
 	}
-	return cleanPath == "/api/v1/daemon/shutdown" || cleanPath == "/api/v1/mihomo/external-resources/download"
+	return cleanPath == "/api/v1/daemon/shutdown"
 }
 
 func requestIPCRole(r *http.Request) ipcRole {

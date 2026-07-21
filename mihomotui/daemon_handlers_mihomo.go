@@ -231,6 +231,62 @@ func (d *Daemon) handleDownloadExternalResources(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, ok(nil))
 }
 
+// handleExternalResourceDetail updates or validates exactly one fixed-path
+// external resource. It deliberately accepts no client supplied file path.
+func (d *Daemon) handleExternalResourceDetail(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/mihomo/external-resources/"), "/"), "/")
+	if len(parts) == 0 || parts[0] == "" || len(parts) > 2 {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("外部资源路径无效"))
+		return
+	}
+	key := parts[0]
+	if _, err := findExternalResourceSpec(key); err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "scan" {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, fmt.Errorf("方法不允许"))
+			return
+		}
+		info, err := ScanExternalResource(key)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, ok(info))
+		return
+	}
+	if len(parts) != 1 {
+		writeError(w, http.StatusNotFound, fmt.Errorf("未找到外部资源操作"))
+		return
+	}
+	switch r.Method {
+	case http.MethodPut:
+		var req struct {
+			URL string `json:"url"`
+		}
+		if err := readJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("解析外部资源 URL 失败: %w", err))
+			return
+		}
+		if err := SetExternalResourceURL(key, req.URL); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, ok(nil))
+	case http.MethodPost:
+		info, err := UpdateExternalResource(key)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, ok(info))
+	default:
+		writeError(w, http.StatusMethodNotAllowed, fmt.Errorf("方法不允许"))
+	}
+}
+
 // handleMihomoVersions exposes cached release metadata and local installation state.
 func (d *Daemon) handleMihomoVersions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -239,7 +295,7 @@ func (d *Daemon) handleMihomoVersions(w http.ResponseWriter, r *http.Request) {
 	}
 	checkedAt, source, lastError := MihomoVersionCacheStatus()
 	writeJSON(w, http.StatusOK, ok(map[string]any{
-		"versions": MihomoVersionList(), "checked_at": checkedAt, "source": source, "last_error": lastError,
+		"versions": MihomoVersionList(), "checked_at": checkedAt, "source": source, "last_error": lastError, "manual_import_path": ManualMihomoImportPath(),
 	}))
 }
 func (d *Daemon) handleMihomoVersionsRefresh(w http.ResponseWriter, r *http.Request) {
@@ -254,6 +310,19 @@ func (d *Daemon) handleMihomoVersionsRefresh(w http.ResponseWriter, r *http.Requ
 	}
 	writeJSON(w, http.StatusOK, ok(versions))
 }
+func (d *Daemon) handleManualMihomoImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, fmt.Errorf("方法不允许"))
+		return
+	}
+	info, err := ImportManualMihomoBinary()
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, ok(info))
+}
+
 func (d *Daemon) handleMihomoVersionDetail(w http.ResponseWriter, r *http.Request) {
 	version := strings.TrimPrefix(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/mihomo/versions/"), "/"), "v")
 	if version == "" {

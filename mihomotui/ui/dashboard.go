@@ -507,6 +507,19 @@ func newKernelStatusCard(app *tview.Application, showModal func(string, string),
 		}()
 	})
 
+	externalManualHelp := func(cause error) string {
+		var sb strings.Builder
+		sb.WriteString(cause.Error())
+		sb.WriteString("\n\n可手动下载并放置外部资源后，在“资源管理 → 外部资源”点击“扫描本地”。")
+		for _, resource := range resourceInfos {
+			if resource.Path == "" {
+				continue
+			}
+			fmt.Fprintf(&sb, "\n%s：%s", resource.Name, resource.Path)
+		}
+		return sb.String()
+	}
+
 	resBtn.SetSelectedFunc(func() {
 		go func() {
 			app.QueueUpdateDraw(func() {
@@ -518,7 +531,7 @@ func newKernelStatusCard(app *tview.Application, showModal func(string, string),
 			}
 			if err != nil {
 				app.QueueUpdateDraw(func() {
-					showModal("下载失败", err.Error())
+					showModal("下载失败", externalManualHelp(err))
 					updateResText()
 				})
 				return
