@@ -41,12 +41,16 @@ func RunServer(args []string, globalDir string) {
 	}
 }
 
-// RunInstallService 安装 systemd 服务
-func RunInstallService(dir string) {
+// RunInstallService 安装 systemd 服务。
+// args 可含 --kernel-was-running=true|false，供 install.sh 在 stop 前传入快照。
+func RunInstallService(dir string, args []string) {
 	if dir != "" {
 		mihomotui.SetCustomConfigDir(dir)
 	}
-	if err := InstallService(); err != nil {
+	fs := flag.NewFlagSet("install_service", flag.ExitOnError)
+	kernelHint := fs.String("kernel-was-running", "", "安装前 mihomo 内核是否在运行 (true/false)；省略则自动探测或读环境变量")
+	_ = fs.Parse(args)
+	if err := InstallServiceWithKernelHint(*kernelHint); err != nil {
 		fmt.Fprintf(os.Stderr, "安装服务失败: %v\n", err)
 		os.Exit(1)
 	}

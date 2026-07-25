@@ -67,15 +67,30 @@ func installBinaryAtomically(source, target string) error {
 	return nil
 }
 
-// InstallService 将当前程序安装为 systemd 系统服务
-// 需要 root 权限执行
+// InstallService 将当前程序安装为 systemd 系统服务。
+// 需要 root 权限执行。
+// 若安装前 mihomo 内核正在运行，安装完成后会尝试通过 IPC 恢复启动内核。
+// 可通过环境变量 MIHOMO_TUI_KERNEL_WAS_RUNNING=0|1 覆盖探测结果
+// （install.sh 在 stop 前设置，避免状态丢失）。
 func InstallService() error {
+	return InstallServiceWithKernelHint("")
+}
+
+// InstallServiceWithKernelHint 与 InstallService 相同，但允许 CLI 传入内核快照 hint。
+func InstallServiceWithKernelHint(kernelHint string) error {
 	// 1. 检查 root 权限
 	if os.Geteuid() != 0 {
 		return fmt.Errorf("安装系统服务需要 root 权限，请使用 sudo 运行")
 	}
 
-	// 2. 若服务正在运行，先停止并清理环境
+	// 2. 在 stop 之前快照内核是否在跑（服务停后内核会被 cgroup 一并杀掉）。
+	kernelWasRunning := mihomotui.ResolveKernelWasRunning(kernelHint)
+	if kernelWasRunning {
+		mihomotui.Infof("安装前检测到 mihomo 内核正在运行，完成后将尝试恢复")
+		fmt.Println(">>> 安装前 mihomo 内核处于运行状态，完成后将自动恢复启动")
+	}
+
+	// 3. 若服务正在运行，先停止并清理环境
 	if output, _ := exec.Command("systemctl", "is-active", "mihomo-tui").CombinedOutput(); strings.TrimSpace(string(output)) == "active" {
 		mihomotui.Infof("检测到服务正在运行，先停止...")
 		if output, err := exec.Command("systemctl", "stop", "mihomo-tui").CombinedOutput(); err != nil {
@@ -86,7 +101,7 @@ func InstallService() error {
 		mihomotui.CleanupEnvironment()
 	}
 
-	// 3. 确保 root daemon 的 IPC 授权组存在：mihomo-tui 仅允许读取状态，
+	// 4. 确保 root daemon 的 IPC 授权组存在：mihomo-tui 仅允许读取状态，
 	// mihomo-tui-operator 可以管理订阅；系统级操作仍由 daemon 的 peer credential 限制。
 	if err := ensureIPCAuthorizationGroups(); err != nil {
 		return err
@@ -100,13 +115,13 @@ func InstallService() error {
 		fmt.Println("   临时生效可执行: newgrp mihomo-tui")
 	}
 
-	// 4. 获取当前可执行文件路径
+	// 5. 获取当前可执行文件路径
 	execPath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("获取可执行文件路径失败: %w", err)
 	}
 
-	// 5. 确定目标安装路径
+	// 6. 确定目标安装路径
 	targetPath := "/usr/local/bin/mihomo-tui"
 
 	// 如果当前路径不是目标路径，则复制
@@ -120,10 +135,10 @@ func InstallService() error {
 		mihomotui.Infof("已原子替换可执行文件: %s", targetPath)
 	}
 
-	// 6. 以 root 用户运行服务
+	// 7. 以 root 用户运行服务
 	runUser := "root"
 
-	// 7. 生成 systemd unit 文件
+	// 8. 生成 systemd unit 文件
 	unitPath := "/etc/systemd/system/mihomo-tui.service"
 	tmpl, err := template.New("unit").Parse(ServiceUnitTemplate)
 	if err != nil {
@@ -148,28 +163,43 @@ func InstallService() error {
 	}
 	mihomotui.Infof("已写入服务文件: %s", unitPath)
 
-	// 8. daemon-reload
+	// 9. daemon-reload
 	if output, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {
 		return fmt.Errorf("systemctl daemon-reload 失败: %w, 输出: %s", err, string(output))
 	}
 	mihomotui.Infof("已执行 systemctl daemon-reload")
 
-	// 9. enable 服务
+	// 10. enable 服务
 	if output, err := exec.Command("systemctl", "enable", "mihomo-tui").CombinedOutput(); err != nil {
 		return fmt.Errorf("systemctl enable 失败: %w, 输出: %s", err, string(output))
 	}
 	mihomotui.Infof("已执行 systemctl enable mihomo-tui")
 
-	// 10. 启动服务
+	// 11. 启动服务
 	if output, err := exec.Command("systemctl", "start", "mihomo-tui").CombinedOutput(); err != nil {
 		return fmt.Errorf("启动服务失败: %w, 输出: %s", err, string(output))
 	}
 	mihomotui.Infof("已执行 systemctl start mihomo-tui")
 
+	// 12. 若安装前内核在跑，等待 daemon 就绪后恢复启动内核。
+	// 恢复失败不使安装整体失败：服务已可用，用户可稍后手动启动内核。
+	if kernelWasRunning {
+		if err := mihomotui.RestoreKernelIfNeeded(true); err != nil {
+			mihomotui.Warnf("恢复 mihomo 内核失败: %v", err)
+			fmt.Printf("⚠️  服务已安装，但恢复 mihomo 内核失败: %v\n", err)
+			fmt.Println("   请在 TUI 中手动启动内核，或检查配置/日志")
+		} else {
+			fmt.Println("✅ 已恢复启动 mihomo 内核")
+		}
+	}
+
 	fmt.Println("✅ mihomo-tui 系统服务安装成功")
 	fmt.Printf("   服务文件: %s\n", unitPath)
 	fmt.Printf("   运行用户: %s\n", runUser)
 	fmt.Printf("   可执行文件: %s\n", targetPath)
+	if kernelWasRunning {
+		fmt.Println("   内核恢复: 已按安装前状态尝试恢复")
+	}
 	fmt.Println("")
 	fmt.Println("使用以下命令管理服务:")
 	fmt.Println("   sudo systemctl start   mihomo-tui")

@@ -102,32 +102,51 @@ fi
 
 chmod +x "${TMP_BIN}"
 
-# ---------- 检查并停止已有服务 ----------
+# ---------- 检查已有服务与内核状态（必须在 stop 前快照内核）----------
 # 注意：先下载完再停止，利用旧版服务的代理能力访问 GitHub
 SERVICE_NAME="mihomo-tui"
-SERVICE_WAS_ACTIVE=false
+KERNEL_WAS_RUNNING=false
 
-if systemctl list-unit-files --type=service | grep -q "^${SERVICE_NAME}\.service"; then
+if systemctl list-unit-files --type=service 2>/dev/null | grep -q "^${SERVICE_NAME}\.service"; then
     if systemctl is-active --quiet "${SERVICE_NAME}"; then
-        echo ">>> 检测到 ${SERVICE_NAME} 服务正在运行，先停止..."
+        echo ">>> 检测到 ${SERVICE_NAME} 服务正在运行"
+        # 通过 root daemon Unix socket 探测 mihomo 内核（须在 stop 前完成）
+        SOCK="/var/run/mihomo-tui/daemon.sock"
+        if [ -S "${SOCK}" ] && command -v curl >/dev/null 2>&1; then
+            RESP="$(curl -fsS --max-time 3 --unix-socket "${SOCK}" "http://daemon/api/v1/mihomo/status" 2>/dev/null || true)"
+            # 兼容 compact JSON 与带空格的编码
+            if printf '%s' "${RESP}" | grep -Eq '"running"[[:space:]]*:[[:space:]]*true'; then
+                KERNEL_WAS_RUNNING=true
+            fi
+        fi
+        if [ "${KERNEL_WAS_RUNNING}" = true ]; then
+            echo ">>> 安装前 mihomo 内核处于运行状态，完成后将自动恢复"
+        else
+            echo ">>> 安装前 mihomo 内核未运行（或无法探测），完成后不自动启动内核"
+        fi
+        echo ">>> 停止 ${SERVICE_NAME} 服务..."
         systemctl stop "${SERVICE_NAME}"
-        SERVICE_WAS_ACTIVE=true
     fi
 fi
 
 # ---------- 安装二进制 ----------
 echo ">>> 安装到 ${INSTALL_DIR} ..."
-cp "${TMP_BIN}" "${INSTALL_DIR}/mihomo-tui"
-chmod +x "${INSTALL_DIR}/mihomo-tui"
+# 原子替换：避免 ETXTBSY（旧进程仍映射可执行文件 inode）
+mkdir -p "${INSTALL_DIR}"
+STAGE_BIN="${INSTALL_DIR}/.mihomo-tui.new.$$"
+cp "${TMP_BIN}" "${STAGE_BIN}"
+chmod 755 "${STAGE_BIN}"
+mv -f "${STAGE_BIN}" "${INSTALL_DIR}/mihomo-tui"
 
-# ---------- 安装/更新服务 ----------
+# ---------- 安装/更新服务（内含启动服务 + 按快照恢复内核）----------
 echo ">>> 安装 systemd 服务..."
-"${INSTALL_DIR}/mihomo-tui" install_service
-
-# ---------- 如果是更新，重启服务 ----------
-if [ "${SERVICE_WAS_ACTIVE}" = true ]; then
-    echo ">>> 重新启动 ${SERVICE_NAME} 服务..."
-    systemctl start "${SERVICE_NAME}"
+# 显式传入快照：install.sh 在 stop 后调用，install_service 无法再自行探测旧状态
+if [ "${KERNEL_WAS_RUNNING}" = true ]; then
+    export MIHOMO_TUI_KERNEL_WAS_RUNNING=1
+    "${INSTALL_DIR}/mihomo-tui" install_service --kernel-was-running=true
+else
+    export MIHOMO_TUI_KERNEL_WAS_RUNNING=0
+    "${INSTALL_DIR}/mihomo-tui" install_service --kernel-was-running=false
 fi
 
 # ---------- 清理 ----------
