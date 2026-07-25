@@ -75,6 +75,10 @@ mihomo-tui — mihomo 终端 UI 与守护进程管理工具
 用法:
   mihomo-tui [选项]                              启动 TUI 客户端
   mihomo-tui server [-d <目录>]                  启动后台 IPC 服务
+  mihomo-tui start                               启动 mihomo 内核（需 IPC；root 守护进程下需 root）
+  mihomo-tui stop                                停止 mihomo 内核（需 IPC；root 守护进程下需 root）
+  mihomo-tui restart                             重启 mihomo 内核（需 IPC；root 守护进程下需 root）
+  mihomo-tui status                              查询 mihomo 内核状态（需 IPC；未运行时退出码 3）
   mihomo-tui subscription import <导入选项>      导入并由 daemon 主动接管订阅
   mihomo-tui install_service                     安装为 systemd 服务（需 root）
   mihomo-tui uninstall                           卸载 systemd 服务（需 root）
@@ -117,10 +121,16 @@ sudo mihomo-tui tun_debug --apply | tee tun-debug.log
 ### 常用命令
 
 ```bash
+# 查看 / 启停 mihomo 内核（需 IPC 守护进程已运行）
+mihomo-tui status
+sudo mihomo-tui start
+sudo mihomo-tui stop
+sudo mihomo-tui restart
+
 # 查看服务状态
 sudo systemctl status mihomo-tui
 
-# 停止/重启服务
+# 停止/重启服务（会连带影响 IPC 守护进程）
 sudo systemctl stop mihomo-tui
 sudo systemctl restart mihomo-tui
 

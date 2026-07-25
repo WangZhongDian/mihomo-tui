@@ -17,6 +17,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "用法:")
 		fmt.Fprintln(os.Stderr, "  mihomo-tui [选项]              启动 TUI 客户端")
 		fmt.Fprintln(os.Stderr, "  mihomo-tui server [选项]       启动后台 IPC 服务")
+		fmt.Fprintln(os.Stderr, "  mihomo-tui start               启动 mihomo 内核（需 IPC 服务；root 守护进程下需 root）")
+		fmt.Fprintln(os.Stderr, "  mihomo-tui stop                停止 mihomo 内核（需 IPC 服务；root 守护进程下需 root）")
+		fmt.Fprintln(os.Stderr, "  mihomo-tui restart             重启 mihomo 内核（需 IPC 服务；root 守护进程下需 root）")
+		fmt.Fprintln(os.Stderr, "  mihomo-tui status              查询 mihomo 内核状态（需 IPC 服务）")
 		fmt.Fprintln(os.Stderr, "  mihomo-tui subscription import --url/--file/--stdin  导入订阅")
 		fmt.Fprintln(os.Stderr, "  mihomo-tui install_service [--kernel-was-running=true|false]")
 		fmt.Fprintln(os.Stderr, "                              安装为 systemd 服务（需 root）；可按安装前内核状态恢复启动")
@@ -44,6 +48,14 @@ func main() {
 	switch args[0] {
 	case "server":
 		cmd.RunServer(args[1:], *dir)
+	case "start":
+		cmd.RunMihomoStart()
+	case "stop":
+		cmd.RunMihomoStop()
+	case "restart":
+		cmd.RunMihomoRestart()
+	case "status":
+		cmd.RunMihomoStatus()
 	case "subscription":
 		if len(args) < 2 || args[1] != "import" {
 			fmt.Fprintln(os.Stderr, "用法: mihomo-tui subscription import --url/--file/--stdin")
