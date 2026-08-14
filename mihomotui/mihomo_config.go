@@ -544,6 +544,29 @@ func (c *Config) buildRouteExcludeAddresses() []string {
 	return mergeRouteExcludeAddresses(base, c.ExcludeAddresses)
 }
 
+// defaultFakeIPFilter 返回内置 fake-ip-filter（命中者返回真实 IP，不走 fake-ip）。
+func defaultFakeIPFilter() []string {
+	return []string{
+		"*.lan",
+		"localhost.ptlogin2.qq.com",
+	}
+}
+
+// buildFakeIPFilter 合并默认项与用户自定义项（去重，保序）。
+func (c *Config) buildFakeIPFilter() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, raw := range append(append([]string{}, defaultFakeIPFilter()...), c.FakeIPFilter...) {
+		entry := strings.TrimSpace(raw)
+		if entry == "" || seen[entry] {
+			continue
+		}
+		seen[entry] = true
+		out = append(out, entry)
+	}
+	return out
+}
+
 // buildGlobalConfig 构建全局基础配置（端口、DNS、TUN、嗅探等）
 func (c *Config) buildGlobalConfig() mihomoConfigYAML {
 	bindAddress := "*"
@@ -613,12 +636,7 @@ func (c *Config) buildGlobalConfig() mihomoConfigYAML {
 			Enable:       true,
 			IPv6:         true,
 			EnhancedMode: "fake-ip",
-			FakeIPFilter: []string{
-				"*",
-				"+.lan",
-				"+.local",
-				"+.market.xiaomi.com",
-			},
+			FakeIPFilter: c.buildFakeIPFilter(),
 			DefaultNameserver: []string{
 				"tls://223.5.5.5",
 				"tls://223.6.6.6",

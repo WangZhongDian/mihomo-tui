@@ -280,7 +280,38 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	// ---- fake-ip-filter：允许域名及通配/后缀模式（*.、+. 前缀）----
+	for i, raw := range c.FakeIPFilter {
+		entry := strings.TrimSpace(raw)
+		if entry == "" {
+			add("fake_ip_filter #%d 不能为空", i+1)
+			continue
+		}
+		if !IsValidFakeIPFilterEntry(entry) {
+			add("fake_ip_filter #%d 非法（需为域名或 *. /+. 前缀的域名模式）: %q", i+1, entry)
+		}
+	}
+
 	return errors.Join(problems...)
+}
+
+// IsValidFakeIPFilterEntry 校验单条 fake-ip-filter 域名模式。
+// 支持：普通域名、*. 后缀通配、+. 后缀通配、localhost 类单标签。
+func IsValidFakeIPFilterEntry(entry string) bool {
+	entry = strings.TrimSpace(entry)
+	if entry == "" {
+		return false
+	}
+	if entry == "*" {
+		// 拒绝裸 *：它会全局关闭 fake-ip，违背本功能"按需放行真实 IP"的语义。
+		return false
+	}
+	// 去掉 *. /+. 前缀后按主机名校验
+	host := entry
+	if strings.HasPrefix(host, "*.") || strings.HasPrefix(host, "+.") {
+		host = host[2:]
+	}
+	return isValidHostname(host)
 }
 
 // IsValidExcludeAddress 判断条目是否可作为 route-exclude-address 来源（IP/CIDR/域名）。

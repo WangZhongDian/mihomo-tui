@@ -179,6 +179,9 @@ type Config struct {
 	// ExcludeAddresses 非空时自动合并进 TUN route-exclude-address，
 	// 用于组网/VPN（如 NetBird STUN）流量绕过 TUN，不影响普通代理场景。
 	ExcludeAddresses []string `yaml:"exclude_addresses,omitempty"`
+	// FakeIPFilter 追加到 DNS fake-ip-filter 的自定义域名（命中者返回真实 IP，不走 fake-ip）。
+	// 内置默认仅 *.lan 与 localhost.ptlogin2.qq.com；此处为用户扩展项。
+	FakeIPFilter []string `yaml:"fake_ip_filter,omitempty"`
 }
 
 // 下载 URL 常量已迁移至 constants.go，保留别名避免编译中断

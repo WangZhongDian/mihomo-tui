@@ -130,3 +130,74 @@ func TestCloneCopiesExcludeAddresses(t *testing.T) {
 		t.Fatalf("Clone did not deep-copy ExcludeAddresses")
 	}
 }
+
+func TestBuildFakeIPFilterDefaults(t *testing.T) {
+	cfg := defaultConfig()
+	got := cfg.buildFakeIPFilter()
+	want := []string{"*.lan", "localhost.ptlogin2.qq.com"}
+	if len(got) != len(want) {
+		t.Fatalf("buildFakeIPFilter() = %#v, want %#v", got, want)
+	}
+	for i, v := range want {
+		if got[i] != v {
+			t.Fatalf("buildFakeIPFilter()[%d] = %q, want %q", i, got[i], v)
+		}
+	}
+	// 默认不应包含会全局关闭 fake-ip 的 "*"
+	for _, v := range got {
+		if v == "*" {
+			t.Fatalf("buildFakeIPFilter() must not contain bare *")
+		}
+	}
+}
+
+func TestBuildFakeIPFilterMergesCustom(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.FakeIPFilter = []string{"+.youmetme.wang", "*.lan", "  extra.example.com  "}
+	got := cfg.buildFakeIPFilter()
+	// 期望：默认两条在前，自定义去重追加，空白被裁剪，重复 *.lan 不再出现
+	want := []string{"*.lan", "localhost.ptlogin2.qq.com", "+.youmetme.wang", "extra.example.com"}
+	if len(got) != len(want) {
+		t.Fatalf("buildFakeIPFilter() = %#v, want %#v", got, want)
+	}
+	for i, v := range want {
+		if got[i] != v {
+			t.Fatalf("buildFakeIPFilter()[%d] = %q, want %q", i, got[i], v)
+		}
+	}
+}
+
+func TestIsValidFakeIPFilterEntry(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"*.lan", true},
+		{"+.youmetme.wang", true},
+		{"netbird.example.com", true},
+		{"localhost.ptlogin2.qq.com", true},
+		{"localhost", true},
+		{"*", false},  // 裸 * 会全局关闭 fake-ip，必须拒绝
+		{"", false},   // 空
+		{"*.", false}, // 前缀后无主机名
+		{"-bad.com", false},
+		{"1.2.3", false}, // 纯数字多段伪域名
+	}
+	for _, c := range cases {
+		if got := IsValidFakeIPFilterEntry(c.in); got != c.want {
+			t.Fatalf("IsValidFakeIPFilterEntry(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+func TestValidateFakeIPFilter(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.FakeIPFilter = []string{"valid.com", "*", ""}
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("Validate() expected error for bad fake_ip_filter entries, got nil")
+	}
+	cfg.FakeIPFilter = []string{"+.a.com", "b.org"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() = %v, want nil", err)
+	}
+}
