@@ -16,6 +16,7 @@ mihomo-tui 是 [mihomo](https://github.com/MetaCubeX/mihomo)（Clash Meta）的�
 - **延迟测试** — 批量节点延迟测试，可视化结果排序
 - **系统代理** — 一键开启/关闭系统代理（HTTP/SOCKS5）
 - **TUN 模式** — 支持 TUN 模式与路由配置
+- **组网/VPN 绕过** — 系统设置中可将指定 IP/CIDR/域名加入 TUN `route-exclude-address`，解决 NetBird 等组网 STUN 被劫持问题
 - **日志查看** — 实时滚动日志，支持过滤与暂停
 - **systemd 服务** — 内置服务安装/卸载，开机自启支持
 - **鼠标支持** — 支持鼠标点击操作按钮、切换页面和选择节点

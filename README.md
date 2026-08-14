@@ -16,6 +16,7 @@ mihomo-tui is a terminal UI and daemon management tool for [mihomo](https://gith
 - **Latency Testing** — Batch node latency tests with visual result sorting
 - **System Proxy** — One-click toggle for system proxy (HTTP/SOCKS5)
 - **TUN Mode** — Support for TUN mode and routing configuration
+- **Group/VPN Bypass** — In System Settings, add IP/CIDR/domains to TUN `route-exclude-address` to fix NetBird and similar STUN issues
 - **Log Viewer** — Real-time scrolling logs with filtering and pause support
 - **systemd Service** — Built-in service install/uninstall with auto-start support
 - **Mouse Support** — Clickable buttons, page switching, and node selection via mouse

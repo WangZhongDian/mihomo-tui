@@ -5,8 +5,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -456,6 +458,92 @@ func (c *Config) ruleProviderFromSubscription(rp RuleProviderSubscription, prefi
 	return name, ruleProviderYAML{Type: "http", Behavior: rp.Behavior, URL: rp.URL, Path: fmt.Sprintf("./rules/%s.%s", sanitized, ext), Format: format, Interval: interval, ProxyGroup: group}, group, true
 }
 
+// defaultRouteExcludeAddresses 返回 TUN 默认私网/本地排除列表。
+func defaultRouteExcludeAddresses() []string {
+	return []string{
+		"192.168.0.0/16",
+		"10.0.0.0/8",
+		"172.16.0.0/12",
+		"100.64.0.0/10",
+		"127.0.0.0/8",
+		"224.0.0.0/4",
+		"fe80::/10",
+		"fc00::/7",
+	}
+}
+
+// normalizeRouteExcludeEntry 将单 IP 规范为 /32 或 /128，已是 CIDR 则原样返回。
+func normalizeRouteExcludeEntry(entry string) string {
+	entry = strings.TrimSpace(entry)
+	if entry == "" {
+		return ""
+	}
+	if ip := net.ParseIP(entry); ip != nil {
+		if ip.To4() != nil {
+			return ip.String() + "/32"
+		}
+		return ip.String() + "/128"
+	}
+	if _, _, err := net.ParseCIDR(entry); err == nil {
+		return entry
+	}
+	return ""
+}
+
+// expandExcludeAddress 将用户条目展开为 route-exclude-address 可用的 CIDR 列表。
+// IP/CIDR 直接规范化；域名解析为 IP 后再规范化。解析失败时记警告并跳过。
+func expandExcludeAddress(entry string) []string {
+	entry = strings.TrimSpace(entry)
+	if entry == "" {
+		return nil
+	}
+	if n := normalizeRouteExcludeEntry(entry); n != "" {
+		return []string{n}
+	}
+	ips, err := net.LookupIP(entry)
+	if err != nil {
+		Warnf("组网绕过域名解析失败: %s: %v", entry, err)
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, ip := range ips {
+		n := normalizeRouteExcludeEntry(ip.String())
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	return out
+}
+
+// mergeRouteExcludeAddresses 合并默认排除与组网绕过列表（去重，保序）。
+func mergeRouteExcludeAddresses(base []string, extra []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, raw := range append(append([]string{}, base...), extra...) {
+		for _, n := range expandExcludeAddress(raw) {
+			if seen[n] {
+				continue
+			}
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// buildRouteExcludeAddresses 生成最终 TUN route-exclude-address。
+// 组网绕过关闭时仅使用默认私网排除；开启时合并用户 ExcludeAddresses（域名会解析为 IP）。
+func (c *Config) buildRouteExcludeAddresses() []string {
+	base := defaultRouteExcludeAddresses()
+	if !c.GroupNetVPN || len(c.ExcludeAddresses) == 0 {
+		return base
+	}
+	return mergeRouteExcludeAddresses(base, c.ExcludeAddresses)
+}
+
 // buildGlobalConfig 构建全局基础配置（端口、DNS、TUN、嗅探等）
 func (c *Config) buildGlobalConfig() mihomoConfigYAML {
 	bindAddress := "*"
@@ -519,16 +607,7 @@ func (c *Config) buildGlobalConfig() mihomoConfigYAML {
 			AutoRoute:           true,
 			AutoRedirect:        c.Mihomo.AutoRedirect,
 			AutoDetectInterface: true,
-			RouteExcludeAddress: []string{
-				"192.168.0.0/16",
-				"10.0.0.0/8",
-				"172.16.0.0/12",
-				"100.64.0.0/10",
-				"127.0.0.0/8",
-				"224.0.0.0/4",
-				"fe80::/10",
-				"fc00::/7",
-			},
+			RouteExcludeAddress: c.buildRouteExcludeAddresses(),
 		},
 		DNS: dnsYAML{
 			Enable:       true,

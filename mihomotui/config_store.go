@@ -24,6 +24,7 @@ func (c *Config) Clone() Config {
 	cp.PreCustomRules = append([]string(nil), c.PreCustomRules...)
 	cp.PostCustomRules = append([]string(nil), c.PostCustomRules...)
 	cp.BuiltInRules = append([]BuiltInRule(nil), c.BuiltInRules...)
+	cp.ExcludeAddresses = append([]string(nil), c.ExcludeAddresses...)
 	return cp
 }
 

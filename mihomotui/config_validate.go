@@ -268,5 +268,86 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	// ---- 组网绕过地址：允许 IP、CIDR 或域名；启用时建议非空但不强制 ----
+	for i, raw := range c.ExcludeAddresses {
+		entry := strings.TrimSpace(raw)
+		if entry == "" {
+			add("exclude_addresses #%d 不能为空", i+1)
+			continue
+		}
+		if !IsValidExcludeAddress(entry) {
+			add("exclude_addresses #%d 非法（需为 IP/CIDR/域名）: %q", i+1, entry)
+		}
+	}
+
 	return errors.Join(problems...)
+}
+
+// IsValidExcludeAddress 判断条目是否可作为 route-exclude-address 来源（IP/CIDR/域名）。
+func IsValidExcludeAddress(entry string) bool {
+	if net.ParseIP(entry) != nil {
+		return true
+	}
+	if _, _, err := net.ParseCIDR(entry); err == nil {
+		return true
+	}
+	return isValidHostname(entry)
+}
+
+// isValidHostname 宽松校验 DNS 主机名（含单标签与多级域名）。
+// 纯数字多段（如 1.2.3）视为非法，避免把残缺 IP 当成域名。
+func isValidHostname(host string) bool {
+	if host == "" || len(host) > 253 {
+		return false
+	}
+	if strings.HasPrefix(host, ".") || strings.HasSuffix(host, ".") {
+		return false
+	}
+	labels := strings.Split(host, ".")
+	hasLetter := false
+	for _, label := range labels {
+		if label == "" || len(label) > 63 {
+			return false
+		}
+		for i, r := range label {
+			isLetter := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+			isDigit := r >= '0' && r <= '9'
+			if isLetter {
+				hasLetter = true
+				continue
+			}
+			if isDigit {
+				continue
+			}
+			if r == '-' && i > 0 && i < len(label)-1 {
+				continue
+			}
+			return false
+		}
+	}
+	// 至少包含一个字母，拒绝 "1.2.3" 这类伪域名
+	return hasLetter
+}
+
+// ParseExcludeAddresses 将多行/逗号分隔文本解析为去重后的绕过地址列表。
+func ParseExcludeAddresses(text string) []string {
+	seen := map[string]bool{}
+	var out []string
+	fields := strings.FieldsFunc(text, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == ',' || r == ';'
+	})
+	for _, f := range fields {
+		entry := strings.TrimSpace(f)
+		if entry == "" || seen[entry] {
+			continue
+		}
+		seen[entry] = true
+		out = append(out, entry)
+	}
+	return out
+}
+
+// FormatExcludeAddresses 将绕过地址列表格式化为多行文本（TUI 展示）。
+func FormatExcludeAddresses(addrs []string) string {
+	return strings.Join(addrs, "\n")
 }

@@ -173,6 +173,10 @@ type Config struct {
 	DefaultProxyGroup       string            `yaml:"default_proxy_group"`
 	LogDir                  string            `yaml:"log_dir"`
 	LogLevel                string            `yaml:"log_level"`
+	// GroupNetVPN 启用后，将 ExcludeAddresses 合并进 TUN route-exclude-address，
+	// 用于组网/VPN（如 NetBird STUN）流量绕过 TUN，不影响普通代理场景。
+	GroupNetVPN      bool     `yaml:"group_net_vpn,omitempty"`
+	ExcludeAddresses []string `yaml:"exclude_addresses,omitempty"`
 }
 
 // 下载 URL 常量已迁移至 constants.go，保留别名避免编译中断
