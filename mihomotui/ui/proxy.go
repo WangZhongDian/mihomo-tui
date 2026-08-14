@@ -41,6 +41,7 @@ func NewProxyPage(app *tview.Application) tview.Primitive {
 
 	toolbar := tview.NewFlex().
 		AddItem(groupDropdown, 0, 1, false).
+		AddItem(nil, 2, 0, false).
 		AddItem(testBtn, 14, 0, false)
 
 	// 节点卡片区域

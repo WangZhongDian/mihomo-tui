@@ -298,7 +298,7 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 
 	currentPage := 0
 	maxPerPage := 4
-	cardHeight := 6
+	cardHeight := 8 // 3行内容 + 3个按钮 + 2个间隔 + 边框
 	selectedRp := 0
 
 	urlInput := tview.NewInputField().
@@ -510,11 +510,13 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 			})
 			btnFlex := tview.NewFlex().SetDirection(tview.FlexRow).
 				AddItem(refreshBtn, 1, 0, true).
+				AddItem(nil, 1, 0, false).
 				AddItem(deleteBtn, 1, 0, true).
+				AddItem(nil, 1, 0, false).
 				AddItem(policyBtn, 1, 0, true)
 			card := tview.NewFlex().
 				AddItem(info, 0, 1, false).
-				AddItem(btnFlex, 6, 0, true)
+				AddItem(btnFlex, 8, 0, true)
 			card.SetBorder(true)
 			if idx == selectedRp {
 				card.SetBorderColor(tcell.ColorBlue)
@@ -893,30 +895,29 @@ func newBuiltInRulesPage(app *tview.Application, pages *tview.Pages) tview.Primi
 }
 
 func showBuiltInRuleEditor(app *tview.Application, pages *tview.Pages, entry mihomotui.BuiltInRule, done func(mihomotui.BuiltInRule)) {
-	form := tview.NewForm()
-	content := tview.NewInputField().SetLabel("规则 ").SetText(entry.Rule)
-	url := tview.NewInputField().SetLabel("URL ").SetText(entry.URL)
-	behavior := tview.NewInputField().SetLabel("行为 ").SetText(entry.Behavior)
-	format := tview.NewInputField().SetLabel("格式 ").SetText(entry.Format)
-	interval := tview.NewInputField().SetLabel("间隔(秒) ").SetText(fmt.Sprintf("%d", entry.Interval))
-	group := tview.NewInputField().SetLabel("策略 ").SetText(entry.ProxyGroup)
-	if entry.Kind == mihomotui.BuiltInRuleLiteral {
-		form.AddFormItem(content)
-	} else if entry.Kind == mihomotui.BuiltInRuleProvider {
-		form.AddFormItem(url).AddFormItem(behavior).AddFormItem(format).AddFormItem(interval)
-	}
-	form.AddFormItem(group)
-	form.AddButton("保存", func() {
-		entry.Rule, entry.URL, entry.Behavior, entry.Format, entry.ProxyGroup = content.GetText(), url.GetText(), behavior.GetText(), format.GetText(), group.GetText()
-		if _, err := fmt.Sscanf(interval.GetText(), "%d", &entry.Interval); entry.Kind == mihomotui.BuiltInRuleProvider && err != nil {
-			ShowAlertModal(app, pages, "输入错误", "更新间隔必须是正整数")
-			return
+	ShowOverlay(app, pages, "builtin_editor", "编辑内置规则（Esc 取消）", func(close func()) (tview.Primitive, tview.Primitive) {
+		form := tview.NewForm()
+		content := tview.NewInputField().SetLabel("规则 ").SetText(entry.Rule)
+		url := tview.NewInputField().SetLabel("URL ").SetText(entry.URL)
+		behavior := tview.NewInputField().SetLabel("行为 ").SetText(entry.Behavior)
+		format := tview.NewInputField().SetLabel("格式 ").SetText(entry.Format)
+		interval := tview.NewInputField().SetLabel("间隔(秒) ").SetText(fmt.Sprintf("%d", entry.Interval))
+		group := tview.NewInputField().SetLabel("策略 ").SetText(entry.ProxyGroup)
+		if entry.Kind == mihomotui.BuiltInRuleLiteral {
+			form.AddFormItem(content)
+		} else if entry.Kind == mihomotui.BuiltInRuleProvider {
+			form.AddFormItem(url).AddFormItem(behavior).AddFormItem(format).AddFormItem(interval)
 		}
-		pages.RemovePage("builtin_editor")
-		done(entry)
-	}).AddButton("取消", func() { pages.RemovePage("builtin_editor") })
-	form.SetBorder(true).SetTitle("编辑内置规则")
-	pages.RemovePage("builtin_editor")
-	pages.AddPage("builtin_editor", form, true, true)
-	app.SetFocus(form)
+		form.AddFormItem(group)
+		form.AddButton("保存", func() {
+			entry.Rule, entry.URL, entry.Behavior, entry.Format, entry.ProxyGroup = content.GetText(), url.GetText(), behavior.GetText(), format.GetText(), group.GetText()
+			if _, err := fmt.Sscanf(interval.GetText(), "%d", &entry.Interval); entry.Kind == mihomotui.BuiltInRuleProvider && err != nil {
+				ShowAlertModal(app, pages, "输入错误", "更新间隔必须是正整数")
+				return
+			}
+			close()
+			done(entry)
+		}).AddButton("取消", close)
+		return form, form
+	})
 }

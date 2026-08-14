@@ -74,7 +74,9 @@ func NewConnectionsPage(app *tview.Application) tview.Primitive {
 	// 第二行工具栏
 	midBar := tview.NewFlex().
 		AddItem(activeBtn, 8, 0, true).
+		AddItem(nil, 2, 0, false).
 		AddItem(closedBtn, 10, 0, true).
+		AddItem(nil, 2, 0, false).
 		AddItem(inputField, 0, 1, true)
 
 	// 连接表格

@@ -84,7 +84,7 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 
 	currentPage := 0
 	maxPerPage := 4 // 初始值，会根据终端高度自适应
-	cardHeight := 6 // 每个卡片占用的行数（3行内容 + 3个按钮 + 边框）
+	cardHeight := 9 // 每个卡片占用的行数（3行内容 + 4个按钮 + 3个间隔 + 边框）
 	selectedSub := 0
 
 	// 输入框
@@ -105,11 +105,14 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 	newBtn := tview.NewButton(" 新建 ")
 	newBtn.SetBorder(false)
 
-	// 顶部工具栏
+	// 顶部工具栏：按钮之间用 2 格空隙隔开，避免挤在一起。
 	toolbar := tview.NewFlex().
 		AddItem(inputField, 0, 1, false).
+		AddItem(nil, 2, 0, false).
 		AddItem(importBtn, 10, 0, false).
+		AddItem(nil, 2, 0, false).
 		AddItem(contentBtn, 14, 0, false).
+		AddItem(nil, 2, 0, false).
 		AddItem(newBtn, 10, 0, false)
 
 	// 订阅卡片列表容器
@@ -239,86 +242,77 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 			return
 		}
 		sub := subscriptions[idx]
-		pages.RemovePage("subscription-editor")
-		form := tview.NewForm().SetButtonsAlign(tview.AlignRight)
-		nameField := tview.NewInputField().SetLabel("名称: ").SetText(sub.Name)
-		urlField := tview.NewInputField().SetLabel("订阅链接: ").SetText(sub.URL)
-		strategyLabels := []string{"直连", "本地 mihomo 代理", "系统代理"}
-		strategyValues := []mihomotui.SubscriptionFetchProxyStrategy{mihomotui.SubscriptionFetchDirect, mihomotui.SubscriptionFetchLocalMihomo, mihomotui.SubscriptionFetchSystem}
-		selectedStrategy := 0
-		for i, value := range strategyValues {
-			if sub.FetchProxyStrategy == value || (sub.FetchProxyStrategy == "" && sub.UseLocalProxy && value == mihomotui.SubscriptionFetchLocalMihomo) {
-				selectedStrategy = i
-			}
-		}
-		strategyField := tview.NewDropDown().SetLabel("拉取网络: ").SetOptions(strategyLabels, nil).SetCurrentOption(selectedStrategy)
-		userAgentField := tview.NewInputField().SetLabel("User-Agent: ").SetText(sub.UserAgent)
-		// 对文件/粘贴导入，正文不可从 IPC 读回；只允许改名称，避免误以为能编辑缓存正文。
-		isRemote := sub.SourceType == "" || sub.SourceType == mihomotui.SubscriptionSourceURL
-		if !isRemote {
-			urlField.SetDisabled(true)
-			strategyField.SetDisabled(true)
-			userAgentField.SetDisabled(true)
-		}
-		form.AddFormItem(nameField).AddFormItem(urlField).AddFormItem(strategyField).AddFormItem(userAgentField)
-		close := func() { pages.RemovePage("subscription-editor"); app.SetFocus(pages); app.SetFocus(inputField) }
-		save := tview.NewButton(" 保存 ")
-		cancel := tview.NewButton(" 取消 ").SetSelectedFunc(close)
-		save.SetSelectedFunc(func() {
-			name, rawURL := strings.TrimSpace(nameField.GetText()), strings.TrimSpace(urlField.GetText())
-			if name == "" {
-				showModal("保存失败", "订阅名称不能为空")
-				return
-			}
-			if isRemote && (!strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://")) {
-				showModal("保存失败", "远程订阅链接必须以 http:// 或 https:// 开头")
-				return
-			}
-			strategyIndex, _ := strategyField.GetCurrentOption()
-			strategy := strategyValues[strategyIndex]
-			go func() {
-				client, err := mihomotui.GetIPCClient()
-				if err == nil {
-					err = client.IPCUpdateSubscription(sub.ID, mihomotui.SubscriptionUpdateRequest{Name: name, URL: rawURL, UseLocalProxy: strategy == mihomotui.SubscriptionFetchLocalMihomo, FetchProxyStrategy: strategy, UserAgent: strings.TrimSpace(userAgentField.GetText())})
+		var nameField *tview.InputField
+		ShowOverlay(app, pages, "subscription-editor", "编辑订阅（Esc 取消）", func(close func()) (tview.Primitive, tview.Primitive) {
+			form := tview.NewForm().SetButtonsAlign(tview.AlignRight)
+			nameField = tview.NewInputField().SetLabel("名称: ").SetText(sub.Name)
+			urlField := tview.NewInputField().SetLabel("订阅链接: ").SetText(sub.URL)
+			strategyLabels := []string{"直连", "本地 mihomo 代理", "系统代理"}
+			strategyValues := []mihomotui.SubscriptionFetchProxyStrategy{mihomotui.SubscriptionFetchDirect, mihomotui.SubscriptionFetchLocalMihomo, mihomotui.SubscriptionFetchSystem}
+			selectedStrategy := 0
+			for i, value := range strategyValues {
+				if sub.FetchProxyStrategy == value || (sub.FetchProxyStrategy == "" && sub.UseLocalProxy && value == mihomotui.SubscriptionFetchLocalMihomo) {
+					selectedStrategy = i
 				}
-				if err != nil {
-					app.QueueUpdateDraw(func() { showModal("保存失败", err.Error()); app.SetFocus(nameField) })
+			}
+			strategyField := tview.NewDropDown().SetLabel("拉取网络: ").SetOptions(strategyLabels, nil).SetCurrentOption(selectedStrategy)
+			userAgentField := tview.NewInputField().SetLabel("User-Agent: ").SetText(sub.UserAgent)
+			// 对文件/粘贴导入，正文不可从 IPC 读回；只允许改名称，避免误以为能编辑缓存正文。
+			isRemote := sub.SourceType == "" || sub.SourceType == mihomotui.SubscriptionSourceURL
+			if !isRemote {
+				urlField.SetDisabled(true)
+				strategyField.SetDisabled(true)
+				userAgentField.SetDisabled(true)
+			}
+			form.AddFormItem(nameField).AddFormItem(urlField).AddFormItem(strategyField).AddFormItem(userAgentField)
+			save := tview.NewButton(" 保存 ")
+			cancel := tview.NewButton(" 取消 ").SetSelectedFunc(close)
+			save.SetSelectedFunc(func() {
+				name, rawURL := strings.TrimSpace(nameField.GetText()), strings.TrimSpace(urlField.GetText())
+				if name == "" {
+					showModal("保存失败", "订阅名称不能为空")
 					return
 				}
-				fresh, err := client.IPCGetConfig()
-				app.QueueUpdateDraw(func() {
+				if isRemote && (!strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://")) {
+					showModal("保存失败", "远程订阅链接必须以 http:// 或 https:// 开头")
+					return
+				}
+				strategyIndex, _ := strategyField.GetCurrentOption()
+				strategy := strategyValues[strategyIndex]
+				go func() {
+					client, err := mihomotui.GetIPCClient()
+					if err == nil {
+						err = client.IPCUpdateSubscription(sub.ID, mihomotui.SubscriptionUpdateRequest{Name: name, URL: rawURL, UseLocalProxy: strategy == mihomotui.SubscriptionFetchLocalMihomo, FetchProxyStrategy: strategy, UserAgent: strings.TrimSpace(userAgentField.GetText())})
+					}
 					if err != nil {
-						showModal("保存成功，但同步失败", err.Error())
+						app.QueueUpdateDraw(func() { showModal("保存失败", err.Error()); app.SetFocus(nameField) })
 						return
 					}
-					cfg = fresh
-					mihomotui.SyncConfigFromServer(fresh)
-					mihomotui.ResetMihomoAPI()
-					reloadSubs()
-					refreshCards()
-					close()
-					showModal("保存成功", "订阅信息已更新；修改远程链接后请点击刷新以下载新内容")
-				})
-			}()
+					fresh, err := client.IPCGetConfig()
+					app.QueueUpdateDraw(func() {
+						if err != nil {
+							showModal("保存成功，但同步失败", err.Error())
+							return
+						}
+						cfg = fresh
+						mihomotui.SyncConfigFromServer(fresh)
+						mihomotui.ResetMihomoAPI()
+						reloadSubs()
+						refreshCards()
+						close()
+						showModal("保存成功", "订阅信息已更新；修改远程链接后请点击刷新以下载新内容")
+					})
+				}()
+			})
+			actions := tview.NewFlex().AddItem(nil, 0, 1, false).AddItem(save, 12, 0, true).AddItem(cancel, 12, 0, false)
+			body := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(form, 6, 0, true).AddItem(tview.NewTextView().SetText(func() string {
+				if isRemote {
+					return "修改链接后需手动刷新，旧缓存会继续保留。"
+				}
+				return "此订阅来自本地文件或粘贴内容；为保护缓存正文，仅支持修改名称。"
+			}()), 2, 0, false).AddItem(actions, 1, 0, false)
+			return body, nameField
 		})
-		actions := tview.NewFlex().AddItem(nil, 0, 1, false).AddItem(save, 12, 0, true).AddItem(cancel, 12, 0, false)
-		body := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(form, 6, 0, true).AddItem(tview.NewTextView().SetText(func() string {
-			if isRemote {
-				return "修改链接后需手动刷新，旧缓存会继续保留。"
-			}
-			return "此订阅来自本地文件或粘贴内容；为保护缓存正文，仅支持修改名称。"
-		}()), 2, 0, false).AddItem(actions, 1, 0, false)
-		body.SetBorder(true).SetTitle("编辑订阅（Esc 取消）")
-		body.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-			if event.Key() == tcell.KeyEscape {
-				close()
-				return nil
-			}
-			return event
-		})
-		pages.AddPage("subscription-editor", body, true, true)
-		app.SetFocus(pages)
-		app.SetFocus(nameField)
 	}
 
 	// 刷新卡片列表
@@ -437,17 +431,20 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 				deleteSub(idx)
 			})
 
-			// 按钮区：应用 + 编辑 + 刷新 + 删除
+			// 按钮区：应用 + 编辑 + 刷新 + 删除（按钮之间留 1 行空隙）
 			btnFlex := tview.NewFlex().SetDirection(tview.FlexRow).
 				AddItem(applyBtn, 1, 0, true).
+				AddItem(nil, 1, 0, false).
 				AddItem(editBtn, 1, 0, true).
+				AddItem(nil, 1, 0, false).
 				AddItem(refreshBtn, 1, 0, true).
+				AddItem(nil, 1, 0, false).
 				AddItem(deleteBtn, 1, 0, true)
 
 			// 卡片布局：左侧信息 + 右侧按钮区
 			card := tview.NewFlex().
 				AddItem(info, 0, 1, false).
-				AddItem(btnFlex, 5, 0, true)
+				AddItem(btnFlex, 8, 0, true)
 			card.SetBorder(true)
 
 			// 选中高亮
@@ -532,86 +529,83 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 
 	// 文件/粘贴导入：使用显式来源模式并将焦点固定到弹窗，避免粘贴落入背景 URL 输入框。
 	contentBtn.SetSelectedFunc(func() {
-		pages.RemovePage("content-import")
-		form := tview.NewForm()
-		nameField := tview.NewInputField().SetLabel("名称: ")
-		modeField := tview.NewDropDown().SetLabel("来源: ").SetOptions([]string{"粘贴内容", "本地文件"}, nil)
-		contentField := tview.NewTextArea().SetPlaceholder("粘贴 Clash YAML / Base64 / URI 列表")
-		pathField := tview.NewInputField().SetLabel("文件路径: ").SetPlaceholder("/path/to/subscription.yaml")
-		pathField.SetDisabled(true)
-		modeField.SetSelectedFunc(func(_ string, index int) {
-			isFile := index == 1
-			contentField.SetDisabled(isFile)
-			pathField.SetDisabled(!isFile)
-			if isFile {
-				form.SetFocus(2)
-				app.SetFocus(pathField)
-			} else {
-				form.SetFocus(1)
-				app.SetFocus(contentField)
-			}
-		})
-		form.AddFormItem(nameField).AddFormItem(contentField).AddFormItem(pathField).AddFormItem(modeField)
-		submitting := false
-		closeDialog := func() { pages.HidePage("content-import"); pages.RemovePage("content-import"); app.SetFocus(inputField) }
-		form.AddButton("导入", func() {
-			if submitting {
-				return
-			}
-			name := strings.TrimSpace(nameField.GetText())
-			selected, _ := modeField.GetCurrentOption()
-			content := strings.TrimSpace(contentField.GetText())
-			source, sourceType := "粘贴内容", mihomotui.SubscriptionSourceContent
-			if selected == 1 {
-				path := strings.TrimSpace(pathField.GetText())
-				if path == "" {
-					showModal("导入失败", "请选择本地订阅文件")
+		ShowOverlay(app, pages, "content-import", "文件或粘贴内容导入（Esc 取消）", func(close func()) (tview.Primitive, tview.Primitive) {
+			form := tview.NewForm()
+			nameField := tview.NewInputField().SetLabel("名称: ")
+			modeField := tview.NewDropDown().SetLabel("来源: ").SetOptions([]string{"粘贴内容", "本地文件"}, nil)
+			contentField := tview.NewTextArea().SetPlaceholder("粘贴 Clash YAML / Base64 / URI 列表")
+			pathField := tview.NewInputField().SetLabel("文件路径: ").SetPlaceholder("/path/to/subscription.yaml")
+			pathField.SetDisabled(true)
+			modeField.SetSelectedFunc(func(_ string, index int) {
+				isFile := index == 1
+				contentField.SetDisabled(isFile)
+				pathField.SetDisabled(!isFile)
+				if isFile {
+					form.SetFocus(2)
+					app.SetFocus(pathField)
+				} else {
+					form.SetFocus(1)
+					app.SetFocus(contentField)
+				}
+			})
+			form.AddFormItem(nameField).AddFormItem(contentField).AddFormItem(pathField).AddFormItem(modeField)
+			submitting := false
+			form.AddButton("导入", func() {
+				if submitting {
 					return
 				}
-				data, err := os.ReadFile(path)
-				if err != nil {
-					showModal("读取文件失败", err.Error())
-					return
-				}
-				content, source, sourceType = string(data), path, mihomotui.SubscriptionSourceFile
-			}
-			if content == "" {
-				showModal("导入失败", "请粘贴订阅内容")
-				return
-			}
-			submitting = true
-			go func() {
-				client, err := mihomotui.GetIPCClient()
-				if err == nil {
-					err = client.IPCImportSubscriptionContent(name, source, sourceType, content, false)
-				}
-				if err != nil {
-					app.QueueUpdateDraw(func() { submitting = false; showModal("导入失败", err.Error()); app.SetFocus(contentField) })
-					return
-				}
-				cfg2, syncErr := client.IPCGetConfig()
-				app.QueueUpdateDraw(func() {
-					submitting = false
-					if syncErr != nil {
-						showModal("导入成功，但同步失败", syncErr.Error())
-						app.SetFocus(contentField)
+				name := strings.TrimSpace(nameField.GetText())
+				selected, _ := modeField.GetCurrentOption()
+				content := strings.TrimSpace(contentField.GetText())
+				source, sourceType := "粘贴内容", mihomotui.SubscriptionSourceContent
+				if selected == 1 {
+					path := strings.TrimSpace(pathField.GetText())
+					if path == "" {
+						showModal("导入失败", "请选择本地订阅文件")
 						return
 					}
-					cfg = cfg2
-					mihomotui.SyncConfigFromServer(cfg2)
-					mihomotui.ResetMihomoAPI()
-					reloadSubs()
-					refreshCards()
-					closeDialog()
-					showModal("导入成功", "订阅内容已缓存并由本程序主动管理")
-				})
-			}()
+					data, err := os.ReadFile(path)
+					if err != nil {
+						showModal("读取文件失败", err.Error())
+						return
+					}
+					content, source, sourceType = string(data), path, mihomotui.SubscriptionSourceFile
+				}
+				if content == "" {
+					showModal("导入失败", "请粘贴订阅内容")
+					return
+				}
+				submitting = true
+				go func() {
+					client, err := mihomotui.GetIPCClient()
+					if err == nil {
+						err = client.IPCImportSubscriptionContent(name, source, sourceType, content, false)
+					}
+					if err != nil {
+						app.QueueUpdateDraw(func() { submitting = false; showModal("导入失败", err.Error()); app.SetFocus(contentField) })
+						return
+					}
+					cfg2, syncErr := client.IPCGetConfig()
+					app.QueueUpdateDraw(func() {
+						submitting = false
+						if syncErr != nil {
+							showModal("导入成功，但同步失败", syncErr.Error())
+							app.SetFocus(contentField)
+							return
+						}
+						cfg = cfg2
+						mihomotui.SyncConfigFromServer(cfg2)
+						mihomotui.ResetMihomoAPI()
+						reloadSubs()
+						refreshCards()
+						close()
+						showModal("导入成功", "订阅内容已缓存并由本程序主动管理")
+					})
+				}()
+			})
+			form.AddButton("取消", close)
+			return form, contentField
 		})
-		form.AddButton("取消", closeDialog)
-		form.SetBorder(true).SetTitle("文件或粘贴内容导入")
-		pages.AddPage("content-import", form, true, true)
-		form.SetFocus(1)
-		app.SetFocus(contentField)
 	})
 
 	// 新建按钮回调（通过 IPC）
@@ -642,10 +636,12 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 		}()
 	})
 
-	// 主布局
+	// 主布局：toolbar 与列表、列表与底部栏之间各留 1 行空隙。
 	page := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(toolbar, 3, 0, false).
+		AddItem(nil, 1, 0, false).
 		AddItem(listFlex, 0, 1, false).
+		AddItem(nil, 1, 0, false).
 		AddItem(bottomBar, 1, 0, false)
 
 	// 页面级键盘捕获：方向键在订阅卡片间导航

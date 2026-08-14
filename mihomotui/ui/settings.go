@@ -11,63 +11,6 @@ import (
 	"mihomotui/mihomotui"
 )
 
-// opaqueModal 包装一个 Primitive，提供两个能力：
-// 1) Draw 时先把整个矩形填成不透明背景（解决 Flex 子项缝隙透明的问题）；
-// 2) MouseHandler 在子组件没有消费事件时吞掉它（解决点击穿透到下层页面的问题）。
-// 必须嵌入 *tview.Box：新版 tview 的 Primitive 接口含未导出方法，
-// 只有 Box 及其子类能满足。
-type opaqueModal struct {
-	*tview.Box
-	inner tview.Primitive
-}
-
-func newOpaqueModal(inner tview.Primitive) *opaqueModal {
-	m := &opaqueModal{Box: tview.NewBox(), inner: inner}
-	m.SetBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
-	return m
-}
-
-func (m *opaqueModal) Draw(screen tcell.Screen) {
-	m.Box.DrawForSubclass(screen, m)
-	m.inner.Draw(screen)
-}
-
-func (m *opaqueModal) SetRect(x, y, w, h int) {
-	m.Box.SetRect(x, y, w, h)
-	m.inner.SetRect(x, y, w, h)
-}
-
-func (m *opaqueModal) Focus(delegate func(p tview.Primitive)) {
-	m.inner.Focus(delegate)
-}
-
-func (m *opaqueModal) HasFocus() bool { return m.inner.HasFocus() }
-func (m *opaqueModal) Blur()          { m.inner.Blur() }
-
-func (m *opaqueModal) InputHandler() func(event *tcell.EventKey, setFocus func(p tview.Primitive)) {
-	return m.inner.InputHandler()
-}
-
-func (m *opaqueModal) PasteHandler() func(pastedText string, setFocus func(p tview.Primitive)) {
-	return m.inner.PasteHandler()
-}
-
-func (m *opaqueModal) MouseHandler() func(action tview.MouseAction, event *tcell.EventMouse, setFocus func(p tview.Primitive)) (bool, tview.Primitive) {
-	innerHandler := m.inner.MouseHandler()
-	return m.WrapMouseHandler(func(action tview.MouseAction, event *tcell.EventMouse, setFocus func(p tview.Primitive)) (bool, tview.Primitive) {
-		if !m.InRect(event.Position()) {
-			return false, nil
-		}
-		if innerHandler != nil {
-			if consumed, capture := innerHandler(action, event, setFocus); consumed {
-				return consumed, capture
-			}
-		}
-		// 子组件没有消费：吞掉，防止穿透到下层页面。
-		return true, nil
-	})
-}
-
 // buildProgressBar 生成文本进度条，percent 为 0-100
 func buildProgressBar(percent int) string {
 	width := 20
@@ -616,154 +559,128 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 	// ==================== 排除地址管理弹窗定义 ====================
 	// openExcludeAddressManager 打开排除地址管理弹窗：支持增删 IP/CIDR/域名。
 	openExcludeAddressManager = func() {
-		const pageName = "exclude-address-manager"
-		input := tview.NewInputField().
-			SetLabel("新增地址 ").
-			SetFieldWidth(40).
-			SetPlaceholder("IP / CIDR / 域名，例如 10.64.0.0/10 或 netbird.example.com")
-		input.SetBorder(true).SetTitle(" 输入 ")
+		var input *tview.InputField
+		ShowOverlay(app, settingsPages, "exclude-address-manager", "排除地址管理（Esc 关闭）", func(close func()) (tview.Primitive, tview.Primitive) {
+			input = tview.NewInputField().
+				SetLabel("新增地址 ").
+				SetFieldWidth(40).
+				SetPlaceholder("IP / CIDR / 域名，例如 10.64.0.0/10 或 netbird.example.com")
+			input.SetBorder(true).SetTitle(" 输入 ")
 
-		addBtn := tview.NewButton(" 添加 ")
-		closeBtn := tview.NewButton(" 关闭 ")
-		hint := tview.NewTextView().
-			SetDynamicColors(true).
-			SetText("[" + mihomotui.ColorMuted + "]每条一个地址；启用「组网/VPN 绕过」后会写入 TUN route-exclude-address[-]")
+			addBtn := tview.NewButton(" 添加 ")
+			closeBtn := tview.NewButton(" 关闭 ")
+			hint := tview.NewTextView().
+				SetDynamicColors(true).
+				SetText("[" + mihomotui.ColorMuted + "]每条一个地址；启用「组网/VPN 绕过」后会写入 TUN route-exclude-address[-]")
 
-		list := tview.NewFlex().SetDirection(tview.FlexRow)
-		list.SetBorder(true).SetTitle(" 排除地址列表 ")
-		list.SetBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
+			list := tview.NewFlex().SetDirection(tview.FlexRow)
+			list.SetBorder(true).SetTitle(" 排除地址列表 ")
 
-		var refreshList func()
-		commitAddrs := func(mutate func(addrs []string) []string) {
-			go func() {
-				resp, err := mihomotui.MutateServerConfig(func(fresh *mihomotui.Config) {
-					fresh.ExcludeAddresses = mutate(append([]string(nil), fresh.ExcludeAddresses...))
-				})
-				app.QueueUpdateDraw(func() {
-					if err != nil {
-						showModal("保存失败", err.Error())
-						return
-					}
-					if resp != nil && !resp.Applied {
-						mihomotui.Warnf("排除地址已保存，但应用失败（%s）: %s", resp.ApplyStage, resp.ApplyError)
-					}
-					refreshList()
-				})
-			}()
-		}
-
-		refreshList = func() {
-			addrs := mihomotui.GlobalConfig().ExcludeAddresses
-			list.Clear()
-			if len(addrs) == 0 {
-				list.AddItem(tview.NewTextView().SetText("  (空) 点击上方添加 IP/CIDR/域名"), 1, 0, false)
-				return
-			}
-			for i, addr := range addrs {
-				idx, entry := i, addr
-				info := tview.NewTextView().SetText(fmt.Sprintf(" %d. %s", idx+1, entry))
-				info.SetBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
-				del := tview.NewButton(" 删除 ")
-				del.SetSelectedFunc(func() {
-					ShowConfirmModal(app, settingsPages, "确认删除", entry, func() {
-						commitAddrs(func(cur []string) []string {
-							out := make([]string, 0, len(cur))
-							for _, v := range cur {
-								if v != entry {
-									out = append(out, v)
-								}
-							}
-							return out
-						})
+			var refreshList func()
+			commitAddrs := func(mutate func(addrs []string) []string) {
+				go func() {
+					resp, err := mihomotui.MutateServerConfig(func(fresh *mihomotui.Config) {
+						fresh.ExcludeAddresses = mutate(append([]string(nil), fresh.ExcludeAddresses...))
 					})
-				})
-				row := tview.NewFlex().
-					AddItem(info, 0, 1, false).
-					AddItem(del, 10, 0, false)
-				row.SetBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
-				list.AddItem(row, 1, 0, false)
+					app.QueueUpdateDraw(func() {
+						if err != nil {
+							showModal("保存失败", err.Error())
+							return
+						}
+						if resp != nil && !resp.Applied {
+							mihomotui.Warnf("排除地址已保存，但应用失败（%s）: %s", resp.ApplyStage, resp.ApplyError)
+						}
+						refreshList()
+					})
+				}()
 			}
-		}
 
-		doAdd := func() {
-			raw := strings.TrimSpace(input.GetText())
-			if raw == "" {
-				showModal("添加失败", "请输入 IP、CIDR 或域名")
-				return
-			}
-			entries := mihomotui.ParseExcludeAddresses(raw)
-			if len(entries) == 0 {
-				showModal("添加失败", "请输入有效地址")
-				return
-			}
-			for _, entry := range entries {
-				if !mihomotui.IsValidExcludeAddress(entry) {
-					showModal("添加失败", fmt.Sprintf("非法地址（需为 IP/CIDR/域名）: %s", entry))
+			refreshList = func() {
+				addrs := mihomotui.GlobalConfig().ExcludeAddresses
+				list.Clear()
+				if len(addrs) == 0 {
+					list.AddItem(tview.NewTextView().SetText("  (空) 点击上方添加 IP/CIDR/域名"), 1, 0, false)
 					return
 				}
+				for i, addr := range addrs {
+					idx, entry := i, addr
+					info := tview.NewTextView().SetText(fmt.Sprintf(" %d. %s", idx+1, entry))
+					del := tview.NewButton(" 删除 ")
+					del.SetSelectedFunc(func() {
+						ShowConfirmModal(app, settingsPages, "确认删除", entry, func() {
+							commitAddrs(func(cur []string) []string {
+								out := make([]string, 0, len(cur))
+								for _, v := range cur {
+									if v != entry {
+										out = append(out, v)
+									}
+								}
+								return out
+							})
+						})
+					})
+					row := tview.NewFlex().
+						AddItem(info, 0, 1, false).
+						AddItem(del, 10, 0, false)
+					list.AddItem(row, 1, 0, false)
+				}
 			}
-			commitAddrs(func(cur []string) []string {
-				seen := map[string]bool{}
-				for _, v := range cur {
-					seen[v] = true
+
+			doAdd := func() {
+				raw := strings.TrimSpace(input.GetText())
+				if raw == "" {
+					showModal("添加失败", "请输入 IP、CIDR 或域名")
+					return
+				}
+				entries := mihomotui.ParseExcludeAddresses(raw)
+				if len(entries) == 0 {
+					showModal("添加失败", "请输入有效地址")
+					return
 				}
 				for _, entry := range entries {
-					if !seen[entry] {
-						cur = append(cur, entry)
-						seen[entry] = true
+					if !mihomotui.IsValidExcludeAddress(entry) {
+						showModal("添加失败", fmt.Sprintf("非法地址（需为 IP/CIDR/域名）: %s", entry))
+						return
 					}
 				}
-				return cur
+				commitAddrs(func(cur []string) []string {
+					seen := map[string]bool{}
+					for _, v := range cur {
+						seen[v] = true
+					}
+					for _, entry := range entries {
+						if !seen[entry] {
+							cur = append(cur, entry)
+							seen[entry] = true
+						}
+					}
+					return cur
+				})
+				input.SetText("")
+			}
+			addBtn.SetSelectedFunc(doAdd)
+			input.SetDoneFunc(func(key tcell.Key) {
+				if key == tcell.KeyEnter {
+					doAdd()
+				}
 			})
-			input.SetText("")
-		}
-		addBtn.SetSelectedFunc(doAdd)
-		input.SetDoneFunc(func(key tcell.Key) {
-			if key == tcell.KeyEnter {
-				doAdd()
-			}
+
+			closeBtn.SetSelectedFunc(close)
+
+			topBar := tview.NewFlex().
+				AddItem(input, 0, 1, true).
+				AddItem(addBtn, 10, 0, false)
+			bottomBar := tview.NewFlex().
+				AddItem(hint, 0, 1, false).
+				AddItem(closeBtn, 10, 0, false)
+			body := tview.NewFlex().SetDirection(tview.FlexRow).
+				AddItem(topBar, 3, 0, true).
+				AddItem(list, 0, 1, false).
+				AddItem(bottomBar, 1, 0, false)
+
+			refreshList()
+			return body, input
 		})
-
-		closeManager := func() {
-			settingsPages.HidePage(pageName)
-			settingsPages.RemovePage(pageName)
-			if systemForm != nil {
-				app.SetFocus(systemForm)
-			}
-		}
-		closeBtn.SetSelectedFunc(closeManager)
-
-		topBar := tview.NewFlex().
-			AddItem(input, 0, 1, true).
-			AddItem(addBtn, 10, 0, false)
-		topBar.SetBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
-		bottomBar := tview.NewFlex().
-			AddItem(hint, 0, 1, false).
-			AddItem(closeBtn, 10, 0, false)
-		bottomBar.SetBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
-		body := tview.NewFlex().SetDirection(tview.FlexRow).
-			AddItem(topBar, 3, 0, true).
-			AddItem(list, 0, 1, false).
-			AddItem(bottomBar, 1, 0, false)
-		body.SetBorder(true).SetTitle(" 排除地址管理 ")
-		// Flex 页面默认透明，底下的设置页会透过来导致看起来像"半透明卡片"，
-		// 这里显式填充不透明背景（body/topBar/bottomBar/list/row 全部都要）。
-		body.SetBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
-		list.SetBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
-		input.SetBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
-		hint.SetBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
-		body.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-			if event.Key() == tcell.KeyEscape {
-				closeManager()
-				return nil
-			}
-			return event
-		})
-
-		refreshList()
-		// 用 opaqueModal 包装：自动填充不透明背景，并吞掉未被子组件消费的鼠标事件。
-		settingsPages.AddPage(pageName, newOpaqueModal(body), true, true)
-		app.SetFocus(input)
 	}
 	// =================================================================
 	return settingsPages
