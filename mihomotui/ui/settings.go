@@ -11,6 +11,92 @@ import (
 	"mihomotui/mihomotui"
 )
 
+// labeledButton 是一个自定义 FormItem：左边显示标签，右边是一个按钮，
+// 用于在表单里实现"Tun排除地址: [管理地址列表]"这种布局。
+type labeledButton struct {
+	*tview.Box
+	label      string
+	btn        *tview.Button
+	finished   func(tcell.Key)
+	disabled   bool
+	labelWidth int
+	labelColor tcell.Color
+}
+
+func newLabeledButton(label, btnLabel string, selected func()) *labeledButton {
+	lb := &labeledButton{
+		Box:   tview.NewBox(),
+		label: label,
+		btn:   tview.NewButton(btnLabel),
+	}
+	lb.btn.SetSelectedFunc(selected)
+	lb.Box.Primitive = lb
+	return lb
+}
+
+// --- tview.FormItem 接口实现 ---
+func (lb *labeledButton) GetLabel() string { return lb.label }
+func (lb *labeledButton) SetFormAttributes(labelWidth int, labelColor, bgColor, fieldTextColor, fieldBgColor tcell.Color) tview.FormItem {
+	lb.labelWidth = labelWidth
+	lb.labelColor = labelColor
+	lb.Box.SetBackgroundColor(bgColor)
+	return lb
+}
+func (lb *labeledButton) GetFieldWidth() int  { return 0 }
+func (lb *labeledButton) GetFieldHeight() int { return 1 }
+func (lb *labeledButton) SetFinishedFunc(handler func(tcell.Key)) tview.FormItem {
+	lb.finished = handler
+	return lb
+}
+func (lb *labeledButton) SetDisabled(disabled bool) tview.FormItem {
+	lb.disabled = disabled
+	lb.btn.SetDisabled(disabled)
+	return lb
+}
+func (lb *labeledButton) GetDisabled() bool { return lb.disabled }
+
+// --- tview.Primitive 接口实现 ---
+func (lb *labeledButton) Draw(screen tcell.Screen) {
+	lb.Box.DrawForSubclass(screen, lb)
+	x, y, w, _ := lb.Box.GetInnerRect()
+	// 用和其他表单项相同的 labelWidth 和颜色画标签
+	labelW := lb.labelWidth
+	if labelW > w {
+		labelW = w
+	}
+	tview.Print(screen, lb.label, x, y, labelW, tview.AlignLeft, lb.labelColor)
+	// 把按钮放在标签右边，宽度自适应文字
+	btnW := tview.TaggedStringWidth(lb.btn.GetLabel()) + 4 // 文字宽度 + 内边距
+	if btnW > w-labelW {
+		btnW = w - labelW
+	}
+	if btnW < 1 {
+		btnW = 1
+	}
+	lb.btn.SetRect(x+labelW, y, btnW, 1)
+	lb.btn.Draw(screen)
+}
+func (lb *labeledButton) InputHandler() func(*tcell.EventKey, func(tview.Primitive)) {
+	// 直接把事件转发给内部按钮，Button.InputHandler 会处理 Enter（触发选中）
+	// 和 Tab/Esc（离开表单）。
+	return lb.btn.InputHandler()
+}
+func (lb *labeledButton) Focus(delegate func(p tview.Primitive)) {
+	lb.Box.Focus(delegate)
+	lb.btn.Focus(delegate)
+}
+func (lb *labeledButton) HasFocus() bool { return lb.Box.HasFocus() || lb.btn.HasFocus() }
+func (lb *labeledButton) Blur() {
+	lb.Box.Blur()
+	lb.btn.Blur()
+}
+func (lb *labeledButton) MouseHandler() func(tview.MouseAction, *tcell.EventMouse, func(tview.Primitive)) (bool, tview.Primitive) {
+	return lb.btn.MouseHandler()
+}
+func (lb *labeledButton) PasteHandler() func(string, func(tview.Primitive)) {
+	return lb.btn.PasteHandler()
+}
+
 // buildProgressBar 生成文本进度条，percent 为 0-100
 func buildProgressBar(percent int) string {
 	width := 20
@@ -267,15 +353,11 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 					}
 				})
 		}).
-		AddCheckbox("组网/VPN 绕过", cfg.GroupNetVPN, func(checked bool) {
-			doSave("组网/VPN 绕过",
-				func(fresh *mihomotui.Config) { fresh.GroupNetVPN = checked },
-				func() {
-					if cb := findCheckbox(systemForm, "组网/VPN 绕过"); cb != nil {
-						silentSet(func() { cb.SetChecked(mihomotui.GlobalConfig().GroupNetVPN) })
-					}
-				})
-		}).
+		AddFormItem(newLabeledButton("Tun排除地址", "管理地址列表", func() {
+			if openExcludeAddressManager != nil {
+				openExcludeAddressManager()
+			}
+		})).
 		AddDropDown("语言", []string{"简体中文", "English"}, langIdx, func(option string, optionIndex int) {
 			language := "zh-CN"
 			if optionIndex == 1 {
@@ -334,16 +416,6 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 			current: func(c *mihomotui.Config) string { return c.LogDir },
 		},
 	})
-	// ==================== 新增：排除地址管理按钮 ====================
-	// openExcludeAddressManager 在 pageReady=true 之后才赋值，
-	// 这里必须用闭包延迟解引用，否则 AddButton 会存入 nil。
-	systemForm.AddButton("排除地址管理", func() {
-		if openExcludeAddressManager != nil {
-			openExcludeAddressManager()
-		}
-	})
-	// =================================================================
-
 	systemForm.SetBorder(true).SetTitle(" 系统设置 ")
 
 	// ---------- mihomo 设置 ----------
@@ -571,7 +643,7 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 			closeBtn := tview.NewButton(" 关闭 ")
 			hint := tview.NewTextView().
 				SetDynamicColors(true).
-				SetText("[" + mihomotui.ColorMuted + "]每条一个地址；启用「组网/VPN 绕过」后会写入 TUN route-exclude-address[-]")
+				SetText("[" + mihomotui.ColorMuted + "]每条一个地址；非空时会自动写入 TUN route-exclude-address[-]")
 
 			list := tview.NewFlex().SetDirection(tview.FlexRow)
 			list.SetBorder(true).SetTitle(" 排除地址列表 ")

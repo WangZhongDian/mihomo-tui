@@ -46,21 +46,21 @@ func TestIsValidExcludeAddress(t *testing.T) {
 	}
 }
 
-func TestBuildRouteExcludeAddressesMergesWhenEnabled(t *testing.T) {
+func TestBuildRouteExcludeAddressesMergesWhenNonEmpty(t *testing.T) {
 	cfg := defaultConfig()
 	base := cfg.buildRouteExcludeAddresses()
 	if len(base) == 0 {
 		t.Fatal("default route excludes should not be empty")
 	}
 
-	cfg.ExcludeAddresses = []string{"203.0.113.10", "198.51.100.0/24", "203.0.113.10"}
-	// 关闭时不合并用户列表
-	gotOff := cfg.buildRouteExcludeAddresses()
-	if len(gotOff) != len(base) {
-		t.Fatalf("disabled GroupNetVPN should keep default excludes only: got %d want %d", len(gotOff), len(base))
+	// 空列表时不合并用户地址
+	cfg.ExcludeAddresses = nil
+	if got := cfg.buildRouteExcludeAddresses(); len(got) != len(base) {
+		t.Fatalf("empty excludes should keep default only: got %d want %d", len(got), len(base))
 	}
 
-	cfg.GroupNetVPN = true
+	// 列表不为空即开启，无需 GroupNetVPN 开关
+	cfg.ExcludeAddresses = []string{"203.0.113.10", "198.51.100.0/24", "203.0.113.10"}
 	got := cfg.buildRouteExcludeAddresses()
 	wantExtra := []string{"203.0.113.10/32", "198.51.100.0/24"}
 	for _, extra := range wantExtra {
@@ -72,7 +72,7 @@ func TestBuildRouteExcludeAddressesMergesWhenEnabled(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Fatalf("enabled merge missing %q in %#v", extra, got)
+			t.Fatalf("merge missing %q in %#v", extra, got)
 		}
 	}
 	// 默认项仍保留
@@ -123,14 +123,10 @@ func TestValidateExcludeAddresses(t *testing.T) {
 
 func TestCloneCopiesExcludeAddresses(t *testing.T) {
 	cfg := defaultConfig()
-	cfg.GroupNetVPN = true
 	cfg.ExcludeAddresses = []string{"10.0.0.0/8"}
 	cp := cfg.Clone()
 	cp.ExcludeAddresses[0] = "changed"
 	if cfg.ExcludeAddresses[0] != "10.0.0.0/8" {
 		t.Fatalf("Clone did not deep-copy ExcludeAddresses")
-	}
-	if !cp.GroupNetVPN {
-		t.Fatalf("Clone lost GroupNetVPN")
 	}
 }

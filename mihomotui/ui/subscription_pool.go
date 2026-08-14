@@ -111,18 +111,29 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 			}
 			rebuildMembers = func() {
 				memberList.Clear()
-				for _, id := range members {
-					prefix := "  "
-					if id == active {
-						prefix = "✓ "
+				for i, id := range members {
+					name := memberName(id)
+					if si := cfg.FindSubscriptionByID(id); si >= 0 && cfg.Subscriptions[si].Disabled {
+						name += " [gray](已禁用)[-]"
 					}
-					memberList.AddItem(prefix+memberName(id), "", 0, nil)
+					memberList.AddItem(fmt.Sprintf("%d. %s", i+1, name), "", 0, nil)
 				}
 			}
 			rebuildMembers()
 			selector := tview.NewDropDown().SetLabel("添加成员: ")
+			// 下拉菜单只显示尚未加入此池的订阅。
 			options, optionIDs := []string{"请选择订阅源"}, []string{""}
 			for _, sub := range cfg.Subscriptions {
+				alreadyInPool := false
+				for _, id := range members {
+					if id == sub.ID {
+						alreadyInPool = true
+						break
+					}
+				}
+				if alreadyInPool {
+					continue
+				}
 				options = append(options, sub.Name)
 				optionIDs = append(optionIDs, sub.ID)
 			}
@@ -133,16 +144,29 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 					return
 				}
 				id := optionIDs[idx]
-				for _, x := range members {
-					if x == id {
-						return
-					}
-				}
 				members = append(members, id)
 				if active == "" {
 					active = id
 				}
 				rebuildMembers()
+				// 添加后刷新下拉菜单，把新成员从选项里移除。
+				newOptions, newOptionIDs := []string{"请选择订阅源"}, []string{""}
+				for _, sub := range cfg.Subscriptions {
+					inPool := false
+					for _, mid := range members {
+						if mid == sub.ID {
+							inPool = true
+							break
+						}
+					}
+					if !inPool {
+						newOptions = append(newOptions, sub.Name)
+						newOptionIDs = append(newOptionIDs, sub.ID)
+					}
+				}
+				options, optionIDs = newOptions, newOptionIDs
+				selector.SetOptions(options, nil)
+				selector.SetCurrentOption(0)
 			})
 			up := tview.NewButton("上移").SetSelectedFunc(func() {
 				i := memberList.GetCurrentItem()
@@ -179,9 +203,73 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 						}
 					}
 					rebuildMembers()
+					// 移除后刷新下拉菜单，把该订阅加回选项。
+					newOptions, newOptionIDs := []string{"请选择订阅源"}, []string{""}
+					for _, sub := range cfg.Subscriptions {
+						inPool := false
+						for _, mid := range members {
+							if mid == sub.ID {
+								inPool = true
+								break
+							}
+						}
+						if !inPool {
+							newOptions = append(newOptions, sub.Name)
+							newOptionIDs = append(newOptionIDs, sub.ID)
+						}
+					}
+					options, optionIDs = newOptions, newOptionIDs
+					selector.SetOptions(options, nil)
+					selector.SetCurrentOption(0)
 				}
 			})
-			memberActions := tview.NewFlex().AddItem(addMember, 8, 0, false).AddItem(up, 8, 0, false).AddItem(down, 8, 0, false).AddItem(activate, 12, 0, false).AddItem(remove, 8, 0, false)
+			toggleDisable := tview.NewButton("禁用/启用").SetSelectedFunc(func() {
+				i := memberList.GetCurrentItem()
+				if i < 0 || i >= len(members) {
+					return
+				}
+				id := members[i]
+				si := cfg.FindSubscriptionByID(id)
+				if si < 0 {
+					return
+				}
+				newDisabled := !cfg.Subscriptions[si].Disabled
+				go func() {
+					client, err := mihomotui.GetIPCClient()
+					if err == nil {
+						sub := cfg.Subscriptions[si]
+						disabled := newDisabled
+						err = client.IPCUpdateSubscription(sub.ID, mihomotui.SubscriptionUpdateRequest{
+							Name:               sub.Name,
+							URL:                sub.URL,
+							UseLocalProxy:      sub.UseLocalProxy,
+							UserAgent:          sub.UserAgent,
+							FetchProxyStrategy: sub.FetchProxyStrategy,
+							Disabled:           &disabled,
+						})
+					}
+					app.QueueUpdateDraw(func() {
+						if err != nil {
+							showModal("切换失败", err.Error())
+							return
+						}
+						cfg.Subscriptions[si].Disabled = newDisabled
+						rebuildMembers()
+					})
+				}()
+			})
+			memberActions := tview.NewFlex().
+				AddItem(addMember, 8, 0, false).
+				AddItem(nil, 1, 0, false).
+				AddItem(up, 8, 0, false).
+				AddItem(nil, 1, 0, false).
+				AddItem(down, 8, 0, false).
+				AddItem(nil, 1, 0, false).
+				AddItem(activate, 12, 0, false).
+				AddItem(nil, 1, 0, false).
+				AddItem(remove, 8, 0, false).
+				AddItem(nil, 1, 0, false).
+				AddItem(toggleDisable, 12, 0, false)
 			save := tview.NewButton(" 保存 ")
 			cancel := tview.NewButton(" 取消 ").SetSelectedFunc(close)
 			save.SetSelectedFunc(func() {
@@ -350,5 +438,20 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 		status.SetText("")
 		render()
 	})
-	return pages
+	return &poolPage{Primitive: pages, reload: func() {
+		load(func(err error) {
+			if err == nil {
+				render()
+			}
+		})
+	}}
 }
+
+// poolPage 包装订阅池页面，实现 Shower 接口：每次切换到该页面时自动刷新，
+// 避免订阅删除后池成员显示过期的缓存数据。
+type poolPage struct {
+	tview.Primitive
+	reload func()
+}
+
+func (p *poolPage) OnShow() { p.reload() }

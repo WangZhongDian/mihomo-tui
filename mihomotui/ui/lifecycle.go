@@ -12,6 +12,11 @@ type Page interface {
 	Stop()
 }
 
+// Shower 可选接口：页面每次被切换为可见时调用（用于刷新数据，避免显示过期缓存）。
+type Shower interface {
+	OnShow()
+}
+
 // pageWrapper 包装 tview.Primitive 并附加生命周期管理
 type pageWrapper struct {
 	tview.Primitive

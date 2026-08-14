@@ -84,7 +84,7 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 
 	currentPage := 0
 	maxPerPage := 4 // 初始值，会根据终端高度自适应
-	cardHeight := 9 // 每个卡片占用的行数（3行内容 + 4个按钮 + 3个间隔 + 边框）
+	cardHeight := 8 // 每个卡片占用的行数（3行内容 + 3个按钮 + 2个间隔 + 边框）
 	selectedSub := 0
 
 	// 输入框
@@ -368,73 +368,53 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 					quotaText += "  到期: " + sub.ExpireAt
 				}
 			}
+			// 计算该订阅已分配到哪些订阅池。
+			poolNames := []string{}
+			for _, pool := range cfg.SubscriptionPools {
+				for _, memberID := range pool.Members {
+					if memberID == sub.ID {
+						label := pool.Name
+						if !pool.Enabled {
+							label += " [gray](池已禁用)[-]"
+						}
+						poolNames = append(poolNames, label)
+						break
+					}
+				}
+			}
+			poolText := "[gray]未分配[-]"
+			if len(poolNames) > 0 {
+				poolText = strings.Join(poolNames, ", ")
+			}
 			infoText := fmt.Sprintf(
 				"[blue::b] %s[-:-:-]    %s\n"+
 					" 来源: %s    更新: %s    %s\n"+
-					" [%s]%s[-]  %s",
-				sub.Name, quotaText, mihomotui.RedactURL(sub.URL), sub.UpdatedAt, percentText, mihomotui.ColorInfo, bar, statusText,
+					" [%s]%s[-]  %s    订阅池: %s",
+				sub.Name, quotaText, mihomotui.RedactURL(sub.URL), sub.UpdatedAt, percentText, mihomotui.ColorInfo, bar, statusText, poolText,
 			)
 			info := tview.NewTextView().SetText(infoText).SetDynamicColors(true)
 
-			// 应用按钮（通过 IPC）
-			applyBtn := tview.NewButton(" ✓ ")
-			applyBtn.SetBorder(false)
-			applyBtn.SetSelectedFunc(func() {
-				subscription := subscriptions[idx]
-				subName := subscription.Name
-				identifier := subscription.ID
-				if identifier == "" {
-					identifier = subName // 兼容未迁移稳定 ID 的历史配置。
-				}
-				go func() {
-					client, err := mihomotui.GetIPCClient()
-					if err != nil {
-						app.QueueUpdateDraw(func() {
-							showModal("应用失败", err.Error())
-						})
-						return
-					}
-					if err := client.IPCApplySubscription(identifier); err != nil {
-						app.QueueUpdateDraw(func() {
-							showModal("应用失败", err.Error())
-						})
-						return
-					}
-					// 同步最新配置并重置 API 客户端（secret 可能已变更）
-					cfg2, _ := client.IPCGetConfig()
-					if cfg2 != nil {
-						mihomotui.SyncConfigFromServer(cfg2)
-						mihomotui.ResetMihomoAPI()
-					}
-					app.QueueUpdateDraw(func() {
-						showModal("应用成功", fmt.Sprintf("已应用订阅: %s\nmihomo 配置已生成", subName))
-					})
-				}()
-			})
-
 			// 编辑按钮
-			editBtn := tview.NewButton(" ✎ ")
+			editBtn := tview.NewButton(" ✎ 编辑 ")
 			editBtn.SetBorder(false)
 			editBtn.SetSelectedFunc(func() { editSub(idx) })
 
 			// 刷新按钮
-			refreshBtn := tview.NewButton(" ↻ ")
+			refreshBtn := tview.NewButton(" ↻ 刷新 ")
 			refreshBtn.SetBorder(false)
 			refreshBtn.SetSelectedFunc(func() {
 				refreshSub(idx)
 			})
 
 			// 删除按钮
-			deleteBtn := tview.NewButton(" ✕ ")
+			deleteBtn := tview.NewButton(" ✕ 删除 ")
 			deleteBtn.SetBorder(false)
 			deleteBtn.SetSelectedFunc(func() {
 				deleteSub(idx)
 			})
 
-			// 按钮区：应用 + 编辑 + 刷新 + 删除（按钮之间留 1 行空隙）
+			// 按钮区：编辑 + 刷新 + 删除（按钮之间留 1 行空隙）
 			btnFlex := tview.NewFlex().SetDirection(tview.FlexRow).
-				AddItem(applyBtn, 1, 0, true).
-				AddItem(nil, 1, 0, false).
 				AddItem(editBtn, 1, 0, true).
 				AddItem(nil, 1, 0, false).
 				AddItem(refreshBtn, 1, 0, true).
@@ -444,7 +424,7 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 			// 卡片布局：左侧信息 + 右侧按钮区
 			card := tview.NewFlex().
 				AddItem(info, 0, 1, false).
-				AddItem(btnFlex, 8, 0, true)
+				AddItem(btnFlex, 7, 0, true)
 			card.SetBorder(true)
 
 			// 选中高亮

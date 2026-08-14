@@ -83,6 +83,10 @@ func Run(standalone bool) error {
 			}
 			currentPage = page
 			pages.SwitchToPage(page)
+			// 切换到可见时刷新数据（如订阅池需要感知订阅删除）。
+			if p, ok := pageMap[page].(Shower); ok {
+				p.OnShow()
+			}
 		}
 	}
 

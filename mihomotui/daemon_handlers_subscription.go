@@ -362,7 +362,7 @@ func (d *Daemon) failoverSubscription(failedID string, cause error) {
 			}
 			for _, candidate := range pool.Members {
 				ci := cfg.FindSubscriptionByID(candidate)
-				if candidate == failedID || ci < 0 || !hasSubscriptionCache(cfg.Subscriptions[ci]) || cfg.Subscriptions[ci].FailureCount >= subscriptionFailureThreshold {
+				if candidate == failedID || ci < 0 || cfg.Subscriptions[ci].Disabled || !hasSubscriptionCache(cfg.Subscriptions[ci]) || cfg.Subscriptions[ci].FailureCount >= subscriptionFailureThreshold {
 					continue
 				}
 				pool.ActiveMemberID = candidate
@@ -439,6 +439,9 @@ func (d *Daemon) handleSubscriptionDetail(w http.ResponseWriter, r *http.Request
 				return fmt.Errorf("本地文件或粘贴订阅不能修改为远程链接，请重新导入")
 			}
 			item.Name = newName
+			if req.Disabled != nil {
+				item.Disabled = *req.Disabled
+			}
 			item.UpdatedAt = timestampNow()
 			updated = *item
 			return nil
@@ -479,33 +482,7 @@ func (d *Daemon) handleSubscriptionDetail(w http.ResponseWriter, r *http.Request
 		Infof("订阅已删除: name=%s", resolvedName)
 		writeJSON(w, http.StatusOK, ok(nil))
 	case http.MethodPost:
-		if action != "apply" {
-			writeError(w, http.StatusBadRequest, fmt.Errorf("未知操作: %s", action))
-			return
-		}
-		var resolvedName string
-		_, err := UpdateGlobalConfig(func(cfg *Config) error {
-			idx := cfg.FindSubscriptionByIdentifier(name)
-			if idx < 0 {
-				return fmt.Errorf("订阅不存在: %s", name)
-			}
-			resolvedName = cfg.Subscriptions[idx].Name
-			return cfg.SetActiveSubscription(resolvedName)
-		})
-		if err != nil {
-			if resolvedName == "" {
-				writeError(w, http.StatusNotFound, err)
-			} else {
-				writeError(w, http.StatusInternalServerError, fmt.Errorf("保存订阅变更失败: %w", err))
-			}
-			return
-		}
-		// mihomo API 客户端由 reconcile 流程按最新配置重建
-		if report := d.reconcileLatest("subscription-apply"); !report.Applied {
-			writeError(w, http.StatusInternalServerError, fmt.Errorf("应用订阅失败: %s", report.Err))
-			return
-		}
-		writeJSON(w, http.StatusOK, ok(nil))
+		writeError(w, http.StatusBadRequest, fmt.Errorf("未知操作: %s", action))
 	default:
 		writeError(w, http.StatusMethodNotAllowed, fmt.Errorf("方法不允许"))
 	}

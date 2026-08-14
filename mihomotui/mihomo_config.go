@@ -535,10 +535,10 @@ func mergeRouteExcludeAddresses(base []string, extra []string) []string {
 }
 
 // buildRouteExcludeAddresses 生成最终 TUN route-exclude-address。
-// 组网绕过关闭时仅使用默认私网排除；开启时合并用户 ExcludeAddresses（域名会解析为 IP）。
+// 组网绕过：只要排除地址列表不为空就开启，合并用户 ExcludeAddresses（域名会解析为 IP）。
 func (c *Config) buildRouteExcludeAddresses() []string {
 	base := defaultRouteExcludeAddresses()
-	if !c.GroupNetVPN || len(c.ExcludeAddresses) == 0 {
+	if len(c.ExcludeAddresses) == 0 {
 		return base
 	}
 	return mergeRouteExcludeAddresses(base, c.ExcludeAddresses)

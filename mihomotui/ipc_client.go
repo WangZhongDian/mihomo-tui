@@ -350,12 +350,6 @@ func (c *IPCClient) IPCDeleteSubscription(name string) error {
 	return err
 }
 
-// IPCApplySubscription 应用订阅（生成 mihomo 配置）
-func (c *IPCClient) IPCApplySubscription(name string) error {
-	_, err := c.requestJSON(http.MethodPost, "/api/v1/subscriptions/"+url.PathEscape(name)+"/apply", nil, nil)
-	return err
-}
-
 // ========== mihomo 管理 ==========
 
 // IPCGetMihomoStatus 获取 mihomo 进程状态

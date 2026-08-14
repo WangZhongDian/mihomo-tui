@@ -122,6 +122,9 @@ type SubscriptionMeta struct {
 	FailureCount          int                            `yaml:"failure_count,omitempty"`
 	LastCheckedAt         string                         `yaml:"last_checked_at,omitempty"`
 	UseLocalProxy         bool                           `yaml:"use_local_proxy,omitempty"`
+	// Disabled 为 true 时临时禁用此订阅：订阅池会跳过它（不参与故障切换、
+	// 不进入 mihomo 配置），但订阅本身和缓存保留，可随时重新启用。
+	Disabled bool `yaml:"disabled,omitempty" json:"disabled,omitempty"`
 }
 
 // RuleProviderSubscription 规则订阅元数据
@@ -173,9 +176,8 @@ type Config struct {
 	DefaultProxyGroup       string            `yaml:"default_proxy_group"`
 	LogDir                  string            `yaml:"log_dir"`
 	LogLevel                string            `yaml:"log_level"`
-	// GroupNetVPN 启用后，将 ExcludeAddresses 合并进 TUN route-exclude-address，
+	// ExcludeAddresses 非空时自动合并进 TUN route-exclude-address，
 	// 用于组网/VPN（如 NetBird STUN）流量绕过 TUN，不影响普通代理场景。
-	GroupNetVPN      bool     `yaml:"group_net_vpn,omitempty"`
 	ExcludeAddresses []string `yaml:"exclude_addresses,omitempty"`
 }
 

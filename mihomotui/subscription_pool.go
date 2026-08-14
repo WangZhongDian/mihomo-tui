@@ -105,7 +105,7 @@ func (c *Config) ensureDefaultPool() *SubscriptionPool {
 }
 func (c *Config) activeSubscriptionForPool(pool SubscriptionPool) (SubscriptionMeta, bool) {
 	i := c.FindSubscriptionByID(pool.ActiveMemberID)
-	if i < 0 {
+	if i < 0 || c.Subscriptions[i].Disabled {
 		return SubscriptionMeta{}, false
 	}
 	return c.Subscriptions[i], true
@@ -124,7 +124,7 @@ func (c *Config) activePoolSubscriptions() ([]SubscriptionMeta, error) {
 					continue
 				}
 				sub := c.Subscriptions[i]
-				if !hasSubscriptionCache(sub) {
+				if sub.Disabled || !hasSubscriptionCache(sub) {
 					continue
 				}
 				result = append(result, sub)

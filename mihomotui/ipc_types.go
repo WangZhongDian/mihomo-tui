@@ -31,6 +31,9 @@ type SubscriptionUpdateRequest struct {
 	UseLocalProxy      bool                           `json:"use_local_proxy,omitempty"` // 历史兼容：等价于 local_mihomo
 	UserAgent          string                         `json:"user_agent,omitempty"`
 	FetchProxyStrategy SubscriptionFetchProxyStrategy `json:"fetch_proxy_strategy,omitempty"`
+	// Disabled 临时禁用此订阅（订阅池跳过它，但缓存保留）。
+	// 指针类型以区分"未传"和"显式传 false"。
+	Disabled *bool `json:"disabled,omitempty"`
 }
 
 type SubscriptionImportRequest struct {
