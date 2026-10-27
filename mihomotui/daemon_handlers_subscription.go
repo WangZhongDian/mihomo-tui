@@ -298,8 +298,11 @@ func (d *Daemon) syncSubscriptionMetadataFromProviders() {
 	}
 	changed := false
 	_, err = UpdateGlobalConfig(func(next *Config) error {
+		providerNames := providerNamesFor(active)
 		for i, sub := range active {
-			provider, ok := providers[fmt.Sprintf("provider%d", i+1)]
+			// provider 名由订阅稳定 ID 推导，必须与 buildProxyConfig 用同一套规则；
+			// 否则额度同步会全部落空。
+			provider, ok := providers[providerNames[i]]
 			if !ok || provider.SubscriptionInfo == nil {
 				continue
 			}
