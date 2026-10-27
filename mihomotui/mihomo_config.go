@@ -5,8 +5,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -280,6 +283,152 @@ func (c *Config) ensureSecret() error {
 	return nil
 }
 
+// proxyProviderName 生成订阅对应的 provider 名。
+// 名称由订阅稳定 ID 推导，而不是按当前成员位置编号：合并池成员增删时，
+// 位置编号会让同一个订阅在 provider1/provider2 之间漂移，
+// 进而影响 `use` 列表、provider API 路径与 mihomo cache.db 中已记录的
+// 代理选择状态。缺 ID 的历史订阅保留旧的位置编号以便继续工作。
+func proxyProviderName(sub SubscriptionMeta, index int) string {
+	if id := strings.TrimSpace(sub.ID); id != "" {
+		sum := md5.Sum([]byte(id))
+		return "provider-" + hex.EncodeToString(sum[:4])
+	}
+	return fmt.Sprintf("provider%d", index+1)
+}
+
+// providerNamesFor 返回与有序订阅列表一一对应的 provider 名。
+// 生成配置与读取运行中 provider 元数据都必须走这里，保证两侧始终一致；
+// 同时对 8 位短哈希的极小概率碰撞做退化处理，避免某个 provider 被
+// map 静默覆盖（表现为"合并池里少了一个订阅"）。
+func providerNamesFor(subs []SubscriptionMeta) []string {
+	names := make([]string, len(subs))
+	used := make(map[string]bool, len(subs))
+	for i, sub := range subs {
+		name := proxyProviderName(sub, i)
+		if used[name] {
+			base := fmt.Sprintf("%s-%d", name, i+1)
+			candidate := base
+			for used[candidate] {
+				candidate += "x"
+			}
+			Warnf("provider 名哈希碰撞，已退化为 %q: id=%q", candidate, sub.ID)
+			name = candidate
+		}
+		used[name] = true
+		names[i] = name
+	}
+	return names
+}
+
+// providerProxyNames 读取 provider 缓存文件中的节点名，用于检测跨订阅重名。
+// 结果按 (路径, 大小, 修改时间) 缓存：配置生成在每次 reconcile 都会执行，
+// 重复解析几十 KB 的 YAML 没有意义。
+var providerProxyNames = struct {
+	mu    sync.RWMutex
+	cache map[string]providerProxyNameEntry
+}{cache: map[string]providerProxyNameEntry{}}
+
+type providerProxyNameEntry struct {
+	size  int64
+	mod   time.Time
+	names []string
+}
+
+// readProviderProxyNames 返回缓存文件里声明的节点名列表。
+// 解析失败（例如 Base64/URI 列表等非 Clash YAML 正文）时返回错误，
+// 由调用方决定是否只是跳过重名检测。
+func readProviderProxyNames(path string) ([]string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	providerProxyNames.mu.RLock()
+	entry, ok := providerProxyNames.cache[path]
+	providerProxyNames.mu.RUnlock()
+	if ok && entry.size == info.Size() && entry.mod.Equal(info.ModTime()) {
+		return entry.names, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var doc struct {
+		Proxies []struct {
+			Name string `yaml:"name"`
+		} `yaml:"proxies"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(doc.Proxies))
+	for _, proxy := range doc.Proxies {
+		if name := strings.TrimSpace(proxy.Name); name != "" {
+			names = append(names, name)
+		}
+	}
+	providerProxyNames.mu.Lock()
+	providerProxyNames.cache[path] = providerProxyNameEntry{size: info.Size(), mod: info.ModTime(), names: names}
+	providerProxyNames.mu.Unlock()
+	return names, nil
+}
+
+// warnDuplicateProviderNodes 在多个订阅包含同名节点时记录告警。
+// mihomo 以节点名作为标识，同名节点会被后者覆盖，表现为"某个订阅的节点消失了"，
+// 这常被误判为合并模式没有生效。这里只提示，不修改用户节点名。
+func warnDuplicateProviderNodes(subs []SubscriptionMeta) {
+	if len(subs) < 2 {
+		return
+	}
+	owner := make(map[string]string, 64)
+	type duplicate struct {
+		name string
+		from []string
+	}
+	duplicates := make(map[string]*duplicate)
+	order := make([]string, 0, 8)
+	for _, sub := range subs {
+		if strings.TrimSpace(sub.CacheFile) == "" {
+			continue
+		}
+		names, err := readProviderProxyNames(sub.CacheFile)
+		if err != nil {
+			Debugf("跳过节点重名检测: subscription=%s err=%v", sub.Name, err)
+			continue
+		}
+		subName := sub.Name
+		if subName == "" {
+			subName = sub.ID
+		}
+		for _, name := range names {
+			if prev, exists := owner[name]; exists {
+				dup, ok := duplicates[name]
+				if !ok {
+					dup = &duplicate{name: name, from: []string{prev}}
+					duplicates[name] = dup
+					order = append(order, name)
+				}
+				already := false
+				for _, f := range dup.from {
+					if f == subName {
+						already = true
+						break
+					}
+				}
+				if !already {
+					dup.from = append(dup.from, subName)
+				}
+				continue
+			}
+			owner[name] = subName
+		}
+	}
+	for _, name := range order {
+		dup := duplicates[name]
+		Warnf("检测到跨订阅同名节点: name=%q 出现在订阅 [%s]；mihomo 以节点名区分代理，"+
+			"同名节点会被覆盖，请为节点改用不同名称或改用不同订阅池", name, strings.Join(dup.from, "、"))
+	}
+}
+
 // buildProxyConfig 构建代理相关配置（proxy-providers、proxies、proxy-groups）
 func (c *Config) buildProxyConfig() (map[string]proxyProviderYAML, []proxyYAML, []proxyGroupYAML, error) {
 	// provider 正文由 daemon 主动拉取并写入私有缓存，mihomo 仅读取本地文件。
@@ -296,13 +445,16 @@ func (c *Config) buildProxyConfig() (map[string]proxyProviderYAML, []proxyYAML, 
 	}
 
 	proxyProviders := make(map[string]proxyProviderYAML)
+	providerSubscriptions := make([]SubscriptionMeta, 0, len(activeSubscriptions))
 	providerNames := make([]string, 0, len(activeSubscriptions))
+	allProviderNames := providerNamesFor(activeSubscriptions)
 	for i, sub := range activeSubscriptions {
 		if legacyRemote && (sub.URL == "" || sub.URL == "手动配置") {
 			continue
 		}
-		providerName := fmt.Sprintf("provider%d", i+1)
+		providerName := allProviderNames[i]
 		providerNames = append(providerNames, providerName)
+		providerSubscriptions = append(providerSubscriptions, sub)
 		provider := proxyProviderYAML{Type: "file", Interval: 0,
 			Path: sub.CacheFile,
 			HealthCheck: healthCheckYAML{
@@ -323,6 +475,7 @@ func (c *Config) buildProxyConfig() (map[string]proxyProviderYAML, []proxyYAML, 
 	if len(providerNames) == 0 {
 		return nil, nil, nil, fmt.Errorf("没有有效的订阅 URL")
 	}
+	warnDuplicateProviderNodes(providerSubscriptions)
 
 	proxies := []proxyYAML{}
 
@@ -456,6 +609,115 @@ func (c *Config) ruleProviderFromSubscription(rp RuleProviderSubscription, prefi
 	return name, ruleProviderYAML{Type: "http", Behavior: rp.Behavior, URL: rp.URL, Path: fmt.Sprintf("./rules/%s.%s", sanitized, ext), Format: format, Interval: interval, ProxyGroup: group}, group, true
 }
 
+// defaultRouteExcludeAddresses 返回 TUN 默认私网/本地排除列表。
+func defaultRouteExcludeAddresses() []string {
+	return []string{
+		"192.168.0.0/16",
+		"10.0.0.0/8",
+		"172.16.0.0/12",
+		"100.64.0.0/10",
+		"127.0.0.0/8",
+		"224.0.0.0/4",
+		"fe80::/10",
+		"fc00::/7",
+	}
+}
+
+// normalizeRouteExcludeEntry 将单 IP 规范为 /32 或 /128，已是 CIDR 则原样返回。
+func normalizeRouteExcludeEntry(entry string) string {
+	entry = strings.TrimSpace(entry)
+	if entry == "" {
+		return ""
+	}
+	if ip := net.ParseIP(entry); ip != nil {
+		if ip.To4() != nil {
+			return ip.String() + "/32"
+		}
+		return ip.String() + "/128"
+	}
+	if _, _, err := net.ParseCIDR(entry); err == nil {
+		return entry
+	}
+	return ""
+}
+
+// expandExcludeAddress 将用户条目展开为 route-exclude-address 可用的 CIDR 列表。
+// IP/CIDR 直接规范化；域名解析为 IP 后再规范化。解析失败时记警告并跳过。
+func expandExcludeAddress(entry string) []string {
+	entry = strings.TrimSpace(entry)
+	if entry == "" {
+		return nil
+	}
+	if n := normalizeRouteExcludeEntry(entry); n != "" {
+		return []string{n}
+	}
+	ips, err := net.LookupIP(entry)
+	if err != nil {
+		Warnf("组网绕过域名解析失败: %s: %v", entry, err)
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, ip := range ips {
+		n := normalizeRouteExcludeEntry(ip.String())
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	return out
+}
+
+// mergeRouteExcludeAddresses 合并默认排除与组网绕过列表（去重，保序）。
+func mergeRouteExcludeAddresses(base []string, extra []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, raw := range append(append([]string{}, base...), extra...) {
+		for _, n := range expandExcludeAddress(raw) {
+			if seen[n] {
+				continue
+			}
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// buildRouteExcludeAddresses 生成最终 TUN route-exclude-address。
+// 组网绕过：只要排除地址列表不为空就开启，合并用户 ExcludeAddresses（域名会解析为 IP）。
+func (c *Config) buildRouteExcludeAddresses() []string {
+	base := defaultRouteExcludeAddresses()
+	if len(c.ExcludeAddresses) == 0 {
+		return base
+	}
+	return mergeRouteExcludeAddresses(base, c.ExcludeAddresses)
+}
+
+// defaultFakeIPFilter 返回内置 fake-ip-filter（命中者返回真实 IP，不走 fake-ip）。
+func defaultFakeIPFilter() []string {
+	return []string{
+		"*.lan",
+		"localhost.ptlogin2.qq.com",
+	}
+}
+
+// buildFakeIPFilter 合并默认项与用户自定义项（去重，保序）。
+func (c *Config) buildFakeIPFilter() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, raw := range append(append([]string{}, defaultFakeIPFilter()...), c.FakeIPFilter...) {
+		entry := strings.TrimSpace(raw)
+		if entry == "" || seen[entry] {
+			continue
+		}
+		seen[entry] = true
+		out = append(out, entry)
+	}
+	return out
+}
+
 // buildGlobalConfig 构建全局基础配置（端口、DNS、TUN、嗅探等）
 func (c *Config) buildGlobalConfig() mihomoConfigYAML {
 	bindAddress := "*"
@@ -519,27 +781,13 @@ func (c *Config) buildGlobalConfig() mihomoConfigYAML {
 			AutoRoute:           true,
 			AutoRedirect:        c.Mihomo.AutoRedirect,
 			AutoDetectInterface: true,
-			RouteExcludeAddress: []string{
-				"192.168.0.0/16",
-				"10.0.0.0/8",
-				"172.16.0.0/12",
-				"100.64.0.0/10",
-				"127.0.0.0/8",
-				"224.0.0.0/4",
-				"fe80::/10",
-				"fc00::/7",
-			},
+			RouteExcludeAddress: c.buildRouteExcludeAddresses(),
 		},
 		DNS: dnsYAML{
 			Enable:       true,
 			IPv6:         true,
 			EnhancedMode: "fake-ip",
-			FakeIPFilter: []string{
-				"*",
-				"+.lan",
-				"+.local",
-				"+.market.xiaomi.com",
-			},
+			FakeIPFilter: c.buildFakeIPFilter(),
 			DefaultNameserver: []string{
 				"tls://223.5.5.5",
 				"tls://223.6.6.6",

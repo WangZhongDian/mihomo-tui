@@ -1,5 +1,5 @@
 [tools]
-go = "1.26.1"
+go = "1.27.3"
 
 [tasks.install]
 run = "make linux && sudo ./build/linux/mihomo-tui install_service"

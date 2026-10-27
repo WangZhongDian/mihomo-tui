@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -83,6 +85,10 @@ func Run(standalone bool) error {
 			}
 			currentPage = page
 			pages.SwitchToPage(page)
+			// 切换到可见时刷新数据（如订阅池需要感知订阅删除）。
+			if p, ok := pageMap[page].(Shower); ok {
+				p.OnShow()
+			}
 		}
 	}
 
@@ -129,7 +135,47 @@ func Run(standalone bool) error {
 		return event
 	})
 
+	// 信号退出：Ctrl+C 在 raw 模式下是按键事件，由 tview 内部转成 Stop()；
+	// 但进程也可能收到真正的 SIGINT/SIGTERM/SIGHUP（终端被关闭、被 systemd
+	// 停止、被 kill、或终端未进入 raw 模式）。没有处理函数时进程会在绘制中途
+	// 直接消失，终端停在「备用屏幕 + 鼠标上报 + 隐藏光标」状态，
+	// 之后每一次滚轮/按键都会被 shell 当成普通文本回显，表现为大量残留输出。
+	// 这里统一转成 app.Stop()，让 tview 走完 Fini() 的正常退出路径。
+	var (
+		sigCh   = make(chan os.Signal, 1)
+		sigStop = make(chan struct{})
+	)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	defer func() {
+		signal.Stop(sigCh)
+		close(sigStop)
+	}()
+	go func() {
+		select {
+		case sig, ok := <-sigCh:
+			if !ok {
+				return
+			}
+			mihomotui.Infof("收到退出信号 %s，正在还原终端并退出", sig)
+			app.Stop()
+			// 兜底：如果 Fini() 因为某个 goroutine 卡住而没能完成，
+			// 超时后强制还原终端再退出——绝不能让用户停留在
+			// 「备用屏幕 + 鼠标上报」状态里。
+			time.AfterFunc(2*time.Second, func() {
+				terminalRestore()
+				os.Exit(0)
+			})
+		case <-sigStop:
+		}
+	}()
+
 	err := app.SetRoot(mainLayout, true).SetFocus(navList).Run()
+
+	// 无论 Run() 如何返回（正常退出、Ctrl+C、收到 SIGTERM/SIGHUP），
+	// 都把终端从「备用屏幕 + 鼠标上报 + 隐藏光标」状态还原回来。
+	// tcell 的 Fini() 通常已经处理过，这里是幂等兜底：进程被信号打断、
+	// 或 Fini 未覆盖到的路径都能靠它收尾，避免终端残留画面和鼠标转义序列。
+	terminalRestore()
 
 	// TUI 退出时，如果是本进程启动的 embedded daemon，停止它
 	if embeddedDaemonStarted {
@@ -178,8 +224,11 @@ func syncConfig() error {
 // standalone 为 true 时，若服务端未运行则自动启动嵌入式服务端
 func ensureDaemon(standalone bool) error {
 	// 检查服务端是否已运行；权限不足必须直接提示，不能误报为服务未运行。
+	// 注意：这里不向 stdout 打印任何内容。TUI 启动后 tcell 会接管终端并进入
+	// 备用屏幕，退出时恢复原画面——启动前打印的一行会一直留在屏幕上，
+	// 成为「退出后残留输出」的一部分。运行模式只写入日志文件。
 	if err := mihomotui.IPCProbeDaemon(); err == nil {
-		fmt.Println("[mihomo-tui] 已连接到独立服务端（分体模式）")
+		mihomotui.Infof("已连接到独立服务端（分体模式）")
 		return nil
 	} else if mihomotui.IsIPCPermissionError(err) {
 		return err
@@ -216,6 +265,6 @@ func ensureDaemon(standalone bool) error {
 	}
 
 	embeddedDaemonStarted = true
-	fmt.Println("[mihomo-tui] 已启动嵌入式服务端（一体模式）")
+	mihomotui.Infof("已启动嵌入式服务端（一体模式）")
 	return nil
 }

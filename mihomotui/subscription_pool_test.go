@@ -1,6 +1,8 @@
 package mihomotui
 
 import (
+	"errors"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -164,6 +166,43 @@ func TestMergePoolUsesAllCachedMembers(t *testing.T) {
 	}
 	if len(providers) != 2 {
 		t.Fatalf("provider count = %d, want 2", len(providers))
+	}
+}
+
+// 回归：root 守护进程 + 普通用户 TUI 时，TUI 对缓存文件 stat 会拿到 EACCES。
+// 这种情况不能判定为"不可用"，否则首页/订阅池页会把正常订阅报成 0/N 可用，
+// 而内核里其实仍在使用这些订阅的节点。
+func TestSubscriptionCacheAvailableTreatsPermissionDeniedAsAvailable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root 不受目录权限限制，无法构造 EACCES 场景")
+	}
+	dir := t.TempDir()
+	cache := filepath.Join(dir, "sub.yaml")
+	if err := os.WriteFile(cache, []byte("proxies: []"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
+
+	if _, err := os.Stat(cache); !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("前置条件不成立：stat 应返回权限错误，实际 %v", err)
+	}
+
+	cfg := defaultConfig()
+	cfg.Subscriptions = []SubscriptionMeta{{ID: "root-owned", Name: "root 订阅", CacheFile: cache}}
+	cfg.SubscriptionPools = []SubscriptionPool{{
+		ID: "pool", Name: "合并池", Mode: SubscriptionPoolModeMerge, Enabled: true,
+		Members: []string{"root-owned"}, ActiveMemberID: "root-owned",
+	}}
+
+	if !SubscriptionCacheAvailable(cfg.Subscriptions[0]) {
+		t.Fatal("无权 stat 不等于缓存缺失，应视为可用")
+	}
+	avail := cfg.PoolAvailability(cfg.SubscriptionPools[0])
+	if avail.Available != 1 || len(avail.Skipped) != 0 {
+		t.Fatalf("availability=%+v, want 1/1 且无跳过成员", avail)
 	}
 }
 

@@ -41,12 +41,16 @@ func RunServer(args []string, globalDir string) {
 	}
 }
 
-// RunInstallService 安装 systemd 服务
-func RunInstallService(dir string) {
+// RunInstallService 安装 systemd 服务。
+// args 可含 --kernel-was-running=true|false，供 install.sh 在 stop 前传入快照。
+func RunInstallService(dir string, args []string) {
 	if dir != "" {
 		mihomotui.SetCustomConfigDir(dir)
 	}
-	if err := InstallService(); err != nil {
+	fs := flag.NewFlagSet("install_service", flag.ExitOnError)
+	kernelHint := fs.String("kernel-was-running", "", "安装前 mihomo 内核是否在运行 (true/false)；省略则自动探测或读环境变量")
+	_ = fs.Parse(args)
+	if err := InstallServiceWithKernelHint(*kernelHint); err != nil {
 		fmt.Fprintf(os.Stderr, "安装服务失败: %v\n", err)
 		os.Exit(1)
 	}
@@ -175,4 +179,103 @@ func RunSubscriptionImport(args []string, globalDir string) {
 		os.Exit(1)
 	}
 	fmt.Println("✅ 订阅已导入并由 mihomo-tui 主动接管")
+}
+
+// ipcClientOrExit 连接已运行的 IPC 守护进程；失败时打印提示并退出。
+func ipcClientOrExit() *mihomotui.IPCClient {
+	if err := mihomotui.IPCProbeDaemon(); err != nil {
+		if mihomotui.IsIPCPermissionError(err) {
+			fmt.Fprintf(os.Stderr, "连接 IPC 服务失败: %v\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "连接 IPC 服务失败: %v\n请先启动守护进程：sudo systemctl start mihomo-tui  或  mihomo-tui server\n", err)
+		}
+		os.Exit(1)
+	}
+	client, err := mihomotui.GetIPCClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "连接 IPC 服务失败: %v\n", err)
+		os.Exit(1)
+	}
+	return client
+}
+
+func printMihomoStatus(status *mihomotui.MihomoStatusResponse) {
+	if status == nil {
+		fmt.Println("内核状态: 未知")
+		return
+	}
+	if status.Running {
+		fmt.Println("内核状态: 运行中")
+		if status.PID > 0 {
+			fmt.Printf("PID: %d\n", status.PID)
+		}
+		if status.RunningVersion != "" {
+			fmt.Printf("版本: %s\n", status.RunningVersion)
+		}
+		if status.VersionAt != "" {
+			fmt.Printf("版本记录时间: %s\n", status.VersionAt)
+		}
+		return
+	}
+	fmt.Println("内核状态: 已停止")
+}
+
+// RunMihomoStart 通过 IPC 启动 mihomo 内核。
+// root 守护进程下该操作需要 root 权限（与 TUI/IPC 鉴权一致）。
+func RunMihomoStart() {
+	client := ipcClientOrExit()
+	if err := client.IPCStartMihomo(); err != nil {
+		fmt.Fprintf(os.Stderr, "启动内核失败: %v\n", err)
+		if mihomotui.IsIPCPermissionError(err) {
+			fmt.Fprintln(os.Stderr, "提示: root 守护进程下请使用 sudo mihomo-tui start")
+		}
+		os.Exit(1)
+	}
+	fmt.Println("✅ 内核已启动")
+	if status, err := client.IPCGetMihomoStatus(); err == nil {
+		printMihomoStatus(status)
+	}
+}
+
+// RunMihomoStop 通过 IPC 停止 mihomo 内核。
+func RunMihomoStop() {
+	client := ipcClientOrExit()
+	if err := client.IPCStopMihomo(); err != nil {
+		fmt.Fprintf(os.Stderr, "停止内核失败: %v\n", err)
+		if mihomotui.IsIPCPermissionError(err) {
+			fmt.Fprintln(os.Stderr, "提示: root 守护进程下请使用 sudo mihomo-tui stop")
+		}
+		os.Exit(1)
+	}
+	fmt.Println("✅ 内核已停止")
+}
+
+// RunMihomoRestart 通过 IPC 重启 mihomo 内核；若当前未运行则直接启动。
+func RunMihomoRestart() {
+	client := ipcClientOrExit()
+	if err := client.IPCRestartMihomo(); err != nil {
+		fmt.Fprintf(os.Stderr, "重启内核失败: %v\n", err)
+		if mihomotui.IsIPCPermissionError(err) {
+			fmt.Fprintln(os.Stderr, "提示: root 守护进程下请使用 sudo mihomo-tui restart")
+		}
+		os.Exit(1)
+	}
+	fmt.Println("✅ 内核已重启")
+	if status, err := client.IPCGetMihomoStatus(); err == nil {
+		printMihomoStatus(status)
+	}
+}
+
+// RunMihomoStatus 查询 mihomo 内核运行状态。
+func RunMihomoStatus() {
+	client := ipcClientOrExit()
+	status, err := client.IPCGetMihomoStatus()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "查询内核状态失败: %v\n", err)
+		os.Exit(1)
+	}
+	printMihomoStatus(status)
+	if status != nil && !status.Running {
+		os.Exit(3)
+	}
 }

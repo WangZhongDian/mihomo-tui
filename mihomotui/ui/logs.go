@@ -48,6 +48,7 @@ func NewLogsPage(app *tview.Application) tview.Primitive {
 	// 顶部工具栏
 	toolbar := tview.NewFlex().
 		AddItem(levelDropdown, 0, 1, true).
+		AddItem(nil, 2, 0, false).
 		AddItem(clearBtn, 10, 0, true)
 
 	// 日志显示区域：关闭自动重绘，由批量定时器统一控制

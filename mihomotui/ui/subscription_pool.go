@@ -5,10 +5,23 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"mihomotui/mihomotui"
 )
+
+// applyFailureText 把"已保存但运行时未生效"的原因转成面向用户的说明。
+func applyFailureText(report *mihomotui.SubscriptionPoolUpdateResponse) string {
+	reason := strings.TrimSpace(report.ApplyError)
+	if reason == "" {
+		reason = "未能生成新的运行配置"
+	}
+	stage := strings.TrimSpace(report.ApplyStage)
+	if stage == "" {
+		stage = "unknown"
+	}
+	return fmt.Sprintf("配置已保存，但运行时应用失败（阶段: %s）：\n%s\n\n内核仍在运行上一次成功生成的旧配置，"+
+		"请修正后重新保存，或到【代理】页面确认节点是否已更新。", stage, reason)
+}
 
 // NewSubscriptionPoolPage 提供订阅池、主备顺序及活动源的专门管理界面。
 func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
@@ -66,182 +79,264 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 			showModal("无法编辑", "订阅数据尚未加载")
 			return
 		}
-		name, enabled, interval := "新订阅池", true, 3600
-		mode := mihomotui.SubscriptionPoolModeFailover
-		members := []string{}
-		active := ""
-		if existing != nil {
-			name = existing.Name
-			enabled = existing.Enabled
-			interval = existing.RefreshInterval
-			mode = existing.Mode
-			if mode == "" {
-				mode = mihomotui.SubscriptionPoolModeFailover
-			}
-			members = append(members, existing.Members...)
-			active = existing.ActiveMemberID
-		}
-		form := tview.NewForm().SetButtonsAlign(tview.AlignRight)
-		nameField := tview.NewInputField().SetLabel("名称: ").SetText(name)
-		modeDropdown := tview.NewDropDown().SetLabel("运行模式: ")
-		modeOptions := []string{"优先级主备（仅活动源）", "合并（全部缓存成员）"}
-		modeIndex := 0
-		if mode == mihomotui.SubscriptionPoolModeMerge {
-			modeIndex = 1
-		}
-		modeDropdown.SetOptions(modeOptions, func(_ string, index int) {
-			if index == 1 {
-				mode = mihomotui.SubscriptionPoolModeMerge
-			} else {
-				mode = mihomotui.SubscriptionPoolModeFailover
-			}
-		}).SetCurrentOption(modeIndex)
-		intervalField := tview.NewInputField().SetLabel("刷新秒数: ").SetText(strconv.Itoa(interval))
-		enabledBox := tview.NewCheckbox().SetLabel("启用此订阅池").SetChecked(enabled)
-		form.AddFormItem(nameField).AddFormItem(modeDropdown).AddFormItem(intervalField).AddFormItem(enabledBox)
-		memberList := tview.NewList().ShowSecondaryText(false)
-		memberList.SetBorder(true).SetTitle("成员顺序（上方优先）")
-		var rebuildMembers func()
-		memberName := func(id string) string {
-			if i := cfg.FindSubscriptionByID(id); i >= 0 {
-				return cfg.Subscriptions[i].Name
-			}
-			return id
-		}
-		rebuildMembers = func() {
-			memberList.Clear()
-			for _, id := range members {
-				prefix := "  "
-				if id == active {
-					prefix = "✓ "
+		var nameField *tview.InputField
+		ShowOverlay(app, pages, "pool-editor", "订阅池编辑（Tab 切换控件，Esc 返回列表）", func(close func()) (tview.Primitive, tview.Primitive) {
+			name, enabled, interval := "新订阅池", true, 3600
+			mode := mihomotui.SubscriptionPoolModeFailover
+			members := []string{}
+			active := ""
+			if existing != nil {
+				name = existing.Name
+				enabled = existing.Enabled
+				interval = existing.RefreshInterval
+				mode = existing.Mode
+				if mode == "" {
+					mode = mihomotui.SubscriptionPoolModeFailover
 				}
-				memberList.AddItem(prefix+memberName(id), "", 0, nil)
+				members = append(members, existing.Members...)
+				active = existing.ActiveMemberID
 			}
-		}
-		rebuildMembers()
-		selector := tview.NewDropDown().SetLabel("添加成员: ")
-		options, optionIDs := []string{"请选择订阅源"}, []string{""}
-		for _, sub := range cfg.Subscriptions {
-			options = append(options, sub.Name)
-			optionIDs = append(optionIDs, sub.ID)
-		}
-		selector.SetOptions(options, nil)
-		addMember := tview.NewButton("添加").SetSelectedFunc(func() {
-			idx, _ := selector.GetCurrentOption()
-			if idx <= 0 {
-				return
+			form := tview.NewForm().SetButtonsAlign(tview.AlignRight)
+			nameField = tview.NewInputField().SetLabel("名称: ").SetText(name)
+			modeDropdown := tview.NewDropDown().SetLabel("运行模式: ")
+			modeOptions := []string{"优先级主备（仅活动源）", "合并（全部缓存成员）"}
+			modeIndex := 0
+			if mode == mihomotui.SubscriptionPoolModeMerge {
+				modeIndex = 1
 			}
-			id := optionIDs[idx]
-			for _, x := range members {
-				if x == id {
-					return
+			modeDropdown.SetOptions(modeOptions, func(_ string, index int) {
+				if index == 1 {
+					mode = mihomotui.SubscriptionPoolModeMerge
+				} else {
+					mode = mihomotui.SubscriptionPoolModeFailover
 				}
+			}).SetCurrentOption(modeIndex)
+			intervalField := tview.NewInputField().SetLabel("刷新秒数: ").SetText(strconv.Itoa(interval))
+			enabledBox := tview.NewCheckbox().SetLabel("启用此订阅池").SetChecked(enabled)
+			form.AddFormItem(nameField).AddFormItem(modeDropdown).AddFormItem(intervalField).AddFormItem(enabledBox)
+			memberList := tview.NewList().ShowSecondaryText(false)
+			memberList.SetBorder(true).SetTitle("成员顺序（上方优先）")
+			var rebuildMembers func()
+			memberName := func(id string) string {
+				// 仅用于展示：名称可能含国旗 emoji 或方括号标签语法。
+				if i := cfg.FindSubscriptionByID(id); i >= 0 {
+					return SanitizeDisplayText(cfg.Subscriptions[i].Name)
+				}
+				return SanitizeDisplayText(id)
 			}
-			members = append(members, id)
-			if active == "" {
-				active = id
+			rebuildMembers = func() {
+				memberList.Clear()
+				for i, id := range members {
+					name := memberName(id)
+					if si := cfg.FindSubscriptionByID(id); si >= 0 && cfg.Subscriptions[si].Disabled {
+						name += " [gray](已禁用)[-]"
+					}
+					memberList.AddItem(fmt.Sprintf("%d. %s", i+1, name), "", 0, nil)
+				}
 			}
 			rebuildMembers()
-		})
-		up := tview.NewButton("上移").SetSelectedFunc(func() {
-			i := memberList.GetCurrentItem()
-			if i > 0 && i < len(members) {
-				members[i-1], members[i] = members[i], members[i-1]
-				rebuildMembers()
-				memberList.SetCurrentItem(i - 1)
-			}
-		})
-		down := tview.NewButton("下移").SetSelectedFunc(func() {
-			i := memberList.GetCurrentItem()
-			if i >= 0 && i < len(members)-1 {
-				members[i+1], members[i] = members[i], members[i+1]
-				rebuildMembers()
-				memberList.SetCurrentItem(i + 1)
-			}
-		})
-		activate := tview.NewButton("设为活动").SetSelectedFunc(func() {
-			i := memberList.GetCurrentItem()
-			if i >= 0 && i < len(members) {
-				active = members[i]
-				rebuildMembers()
-			}
-		})
-		remove := tview.NewButton("移除").SetSelectedFunc(func() {
-			i := memberList.GetCurrentItem()
-			if i >= 0 && i < len(members) {
-				removed := members[i]
-				members = append(members[:i], members[i+1:]...)
-				if active == removed {
-					active = ""
-					if len(members) > 0 {
-						active = members[0]
+			selector := tview.NewDropDown().SetLabel("添加成员: ")
+			// 下拉菜单只显示尚未加入此池的订阅。
+			options, optionIDs := []string{"请选择订阅源"}, []string{""}
+			for _, sub := range cfg.Subscriptions {
+				alreadyInPool := false
+				for _, id := range members {
+					if id == sub.ID {
+						alreadyInPool = true
+						break
 					}
 				}
-				rebuildMembers()
-			}
-		})
-		memberActions := tview.NewFlex().AddItem(addMember, 8, 0, false).AddItem(up, 8, 0, false).AddItem(down, 8, 0, false).AddItem(activate, 12, 0, false).AddItem(remove, 8, 0, false)
-		close := func() { pages.RemovePage("pool-editor"); app.SetFocus(pages); app.SetFocus(add) }
-		save := tview.NewButton(" 保存 ")
-		cancel := tview.NewButton(" 取消 ").SetSelectedFunc(close)
-		save.SetSelectedFunc(func() {
-			parsed, err := strconv.Atoi(strings.TrimSpace(intervalField.GetText()))
-			if err != nil || parsed <= 0 {
-				showModal("保存失败", "刷新间隔必须是正整数秒")
-				return
-			}
-			if enabledBox.IsChecked() && len(members) == 0 {
-				showModal("保存失败", "启用的订阅池至少需要一个成员")
-				return
-			}
-			req := poolRequest(members, active, strings.TrimSpace(nameField.GetText()), mode, enabledBox.IsChecked(), parsed)
-			go func() {
-				client, err := mihomotui.GetIPCClient()
-				if err == nil {
-					if existing == nil {
-						_, err = client.IPCCreateSubscriptionPool(req)
-					} else {
-						err = client.IPCUpdateSubscriptionPool(existing.ID, req)
-					}
+				if alreadyInPool {
+					continue
 				}
-				app.QueueUpdateDraw(func() {
-					if err != nil {
-						showModal("保存失败", err.Error())
-						return
-					}
-					close()
-					load(func(e error) {
-						if e != nil {
-							showModal("同步失败", e.Error())
-						} else {
-							render()
+				options = append(options, SanitizeDisplayText(sub.Name))
+				optionIDs = append(optionIDs, sub.ID)
+			}
+			selector.SetOptions(options, nil)
+			addMember := tview.NewButton("添加").SetSelectedFunc(func() {
+				idx, _ := selector.GetCurrentOption()
+				if idx <= 0 {
+					return
+				}
+				id := optionIDs[idx]
+				members = append(members, id)
+				if active == "" {
+					active = id
+				}
+				rebuildMembers()
+				// 添加后刷新下拉菜单，把新成员从选项里移除。
+				newOptions, newOptionIDs := []string{"请选择订阅源"}, []string{""}
+				for _, sub := range cfg.Subscriptions {
+					inPool := false
+					for _, mid := range members {
+						if mid == sub.ID {
+							inPool = true
+							break
 						}
+					}
+					if !inPool {
+						newOptions = append(newOptions, SanitizeDisplayText(sub.Name))
+						newOptionIDs = append(newOptionIDs, sub.ID)
+					}
+				}
+				options, optionIDs = newOptions, newOptionIDs
+				selector.SetOptions(options, nil)
+				selector.SetCurrentOption(0)
+			})
+			up := tview.NewButton("上移").SetSelectedFunc(func() {
+				i := memberList.GetCurrentItem()
+				if i > 0 && i < len(members) {
+					members[i-1], members[i] = members[i], members[i-1]
+					rebuildMembers()
+					memberList.SetCurrentItem(i - 1)
+				}
+			})
+			down := tview.NewButton("下移").SetSelectedFunc(func() {
+				i := memberList.GetCurrentItem()
+				if i >= 0 && i < len(members)-1 {
+					members[i+1], members[i] = members[i], members[i+1]
+					rebuildMembers()
+					memberList.SetCurrentItem(i + 1)
+				}
+			})
+			activate := tview.NewButton("设为活动").SetSelectedFunc(func() {
+				i := memberList.GetCurrentItem()
+				if i >= 0 && i < len(members) {
+					active = members[i]
+					rebuildMembers()
+				}
+			})
+			remove := tview.NewButton("移除").SetSelectedFunc(func() {
+				i := memberList.GetCurrentItem()
+				if i >= 0 && i < len(members) {
+					removed := members[i]
+					members = append(members[:i], members[i+1:]...)
+					if active == removed {
+						active = ""
+						if len(members) > 0 {
+							active = members[0]
+						}
+					}
+					rebuildMembers()
+					// 移除后刷新下拉菜单，把该订阅加回选项。
+					newOptions, newOptionIDs := []string{"请选择订阅源"}, []string{""}
+					for _, sub := range cfg.Subscriptions {
+						inPool := false
+						for _, mid := range members {
+							if mid == sub.ID {
+								inPool = true
+								break
+							}
+						}
+						if !inPool {
+							newOptions = append(newOptions, SanitizeDisplayText(sub.Name))
+							newOptionIDs = append(newOptionIDs, sub.ID)
+						}
+					}
+					options, optionIDs = newOptions, newOptionIDs
+					selector.SetOptions(options, nil)
+					selector.SetCurrentOption(0)
+				}
+			})
+			toggleDisable := tview.NewButton("禁用/启用").SetSelectedFunc(func() {
+				i := memberList.GetCurrentItem()
+				if i < 0 || i >= len(members) {
+					return
+				}
+				id := members[i]
+				si := cfg.FindSubscriptionByID(id)
+				if si < 0 {
+					return
+				}
+				newDisabled := !cfg.Subscriptions[si].Disabled
+				go func() {
+					client, err := mihomotui.GetIPCClient()
+					if err == nil {
+						sub := cfg.Subscriptions[si]
+						disabled := newDisabled
+						err = client.IPCUpdateSubscription(sub.ID, mihomotui.SubscriptionUpdateRequest{
+							Name:               sub.Name,
+							URL:                sub.URL,
+							UseLocalProxy:      sub.UseLocalProxy,
+							UserAgent:          sub.UserAgent,
+							FetchProxyStrategy: sub.FetchProxyStrategy,
+							Disabled:           &disabled,
+						})
+					}
+					app.QueueUpdateDraw(func() {
+						if err != nil {
+							showModal("切换失败", err.Error())
+							return
+						}
+						cfg.Subscriptions[si].Disabled = newDisabled
+						rebuildMembers()
 					})
-				})
-			}()
+				}()
+			})
+			memberActions := tview.NewFlex().
+				AddItem(addMember, 8, 0, false).
+				AddItem(nil, 1, 0, false).
+				AddItem(up, 8, 0, false).
+				AddItem(nil, 1, 0, false).
+				AddItem(down, 8, 0, false).
+				AddItem(nil, 1, 0, false).
+				AddItem(activate, 12, 0, false).
+				AddItem(nil, 1, 0, false).
+				AddItem(remove, 8, 0, false).
+				AddItem(nil, 1, 0, false).
+				AddItem(toggleDisable, 12, 0, false)
+			save := tview.NewButton(" 保存 ")
+			cancel := tview.NewButton(" 取消 ").SetSelectedFunc(close)
+			save.SetSelectedFunc(func() {
+				parsed, err := strconv.Atoi(strings.TrimSpace(intervalField.GetText()))
+				if err != nil || parsed <= 0 {
+					showModal("保存失败", "刷新间隔必须是正整数秒")
+					return
+				}
+				if enabledBox.IsChecked() && len(members) == 0 {
+					showModal("保存失败", "启用的订阅池至少需要一个成员")
+					return
+				}
+				req := poolRequest(members, active, strings.TrimSpace(nameField.GetText()), mode, enabledBox.IsChecked(), parsed)
+				go func() {
+					client, err := mihomotui.GetIPCClient()
+					var report *mihomotui.SubscriptionPoolUpdateResponse
+					if err == nil {
+						if existing == nil {
+							report, err = client.IPCCreateSubscriptionPool(req)
+						} else {
+							report, err = client.IPCUpdateSubscriptionPool(existing.ID, req)
+						}
+					}
+					app.QueueUpdateDraw(func() {
+						if err != nil {
+							showModal("保存失败", err.Error())
+							return
+						}
+						close()
+						load(func(e error) {
+							if e != nil {
+								showModal("同步失败", e.Error())
+								return
+							}
+							render()
+							if report != nil && !report.Applied {
+								showModal("保存成功，但未生效", applyFailureText(report))
+							}
+						})
+					})
+				}()
+			})
+			actionBar := tview.NewFlex().SetDirection(tview.FlexColumn).AddItem(nil, 0, 1, false).AddItem(save, 12, 0, true).AddItem(cancel, 12, 0, false)
+			right := tview.NewFlex().SetDirection(tview.FlexRow).
+				AddItem(form, 6, 0, true).
+				AddItem(selector, 1, 0, false).
+				AddItem(memberActions, 1, 0, false).
+				AddItem(memberList, 0, 1, false).
+				AddItem(actionBar, 1, 0, false)
+			editor := tview.NewFlex().AddItem(right, 0, 1, true)
+			return editor, nameField
 		})
-		actionBar := tview.NewFlex().SetDirection(tview.FlexColumn).AddItem(nil, 0, 1, false).AddItem(save, 12, 0, true).AddItem(cancel, 12, 0, false)
-		right := tview.NewFlex().SetDirection(tview.FlexRow).
-			AddItem(form, 6, 0, true).
-			AddItem(selector, 1, 0, false).
-			AddItem(memberActions, 1, 0, false).
-			AddItem(memberList, 0, 1, false).
-			AddItem(actionBar, 1, 0, false)
-		editor := tview.NewFlex().AddItem(right, 0, 1, true)
-		editor.SetBorder(true).SetTitle("订阅池编辑（Tab 切换控件，Esc 返回列表）")
-		editor.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-			if event.Key() == tcell.KeyEscape {
-				close()
-				return nil
-			}
-			return event
-		})
-		pages.RemovePage("pool-editor")
-		pages.AddPage("pool-editor", editor, true, true)
-		// Pages 是应用当前焦点链中的节点；先聚焦 Pages，才能让它把焦点委派给最上层 editor。
-		// 再聚焦具体控件，避免弹窗只渲染边框却无法接收键盘/鼠标事件。
-		app.SetFocus(pages)
-		app.SetFocus(nameField)
 	}
 
 	render = func() {
@@ -253,12 +348,13 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 		}
 		for i := range cfg.SubscriptionPools {
 			pool := cfg.SubscriptionPools[i]
+			availability := cfg.PoolAvailability(pool)
 			activeName, cache := "无", "无"
 			state := "[yellow]已禁用[-]"
 			if si := cfg.FindSubscriptionByID(pool.ActiveMemberID); si >= 0 {
 				sub := cfg.Subscriptions[si]
-				activeName = sub.Name
-				if sub.CacheFile != "" {
+				activeName = SanitizeDisplayText(sub.Name)
+				if mihomotui.SubscriptionCacheAvailable(sub) {
 					cache = "可用"
 				} else {
 					cache = "缺失"
@@ -278,16 +374,29 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 			modeText := "优先级主备"
 			if pool.Mode == mihomotui.SubscriptionPoolModeMerge {
 				modeText = "合并"
-				activeName = "全部可用成员"
-				available := 0
-				for _, memberID := range pool.Members {
-					if si := cfg.FindSubscriptionByID(memberID); si >= 0 && cfg.Subscriptions[si].CacheFile != "" {
-						available++
-					}
-				}
-				cache = fmt.Sprintf("%d/%d 可用", available, len(pool.Members))
+				activeName = fmt.Sprintf("参与合并 %d/%d", availability.Available, availability.Total)
+				cache = fmt.Sprintf("%d/%d 可用", availability.Available, availability.Total)
 			}
-			content := fmt.Sprintf("[yellow::b]%s[-:-:-]  %s\n运行模式: %s    活动源: %s    本地缓存: %s\n成员: %d    刷新间隔: %d 秒\n最近切换: %s\n原因: %s", pool.Name, state, modeText, activeName, cache, len(pool.Members), pool.RefreshInterval, pool.LastSwitchAt, reason)
+			// 池被禁用时成员完全不参与运行，必须在卡片上直接说明，
+			// 否则只会看到"保存成功"和内核里过期的旧节点。
+			runHint := ""
+			if !pool.Enabled {
+				runHint = "\n[red]未参与运行：此池已禁用，成员不会生成 provider[-]"
+			}
+			skippedText := ""
+			if len(availability.Skipped) > 0 {
+				parts := make([]string, 0, len(availability.Skipped))
+				for _, s := range availability.Skipped {
+					name := SanitizeDisplayText(s.Name)
+					if name == "" {
+						name = SanitizeDisplayText(s.ID)
+					}
+					parts = append(parts, name+"("+s.Reason+")")
+				}
+				skippedText = "\n[gray]已跳过: " + strings.Join(parts, "、") + "[-]"
+			}
+			content := fmt.Sprintf("[yellow::b]%s[-:-:-]  %s\n运行模式: %s    活动源: %s    本地缓存: %s\n成员: %d    刷新间隔: %d 秒\n最近切换: %s\n原因: %s%s%s",
+				SanitizeDisplayText(pool.Name), state, modeText, activeName, cache, len(pool.Members), pool.RefreshInterval, pool.LastSwitchAt, reason, runHint, skippedText)
 			info := tview.NewTextView().SetDynamicColors(true).SetWrap(true).SetText(content)
 			p := pool
 			edit := tview.NewButton("编辑").SetSelectedFunc(func() { showEditor(&p) })
@@ -315,8 +424,9 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 			deleteBtn := tview.NewButton("删除").SetSelectedFunc(func() {
 				go func() {
 					c, e := mihomotui.GetIPCClient()
+					var report *mihomotui.SubscriptionPoolUpdateResponse
 					if e == nil {
-						e = c.IPCDeleteSubscriptionPool(p.ID)
+						report, e = c.IPCDeleteSubscriptionPool(p.ID)
 					}
 					app.QueueUpdateDraw(func() {
 						if e != nil {
@@ -326,14 +436,22 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 						load(func(err error) {
 							if err != nil {
 								showModal("同步失败", err.Error())
-							} else {
-								render()
+								return
+							}
+							render()
+							if report != nil && !report.Applied {
+								showModal("已删除，但未生效", applyFailureText(report))
 							}
 						})
 					})
 				}()
 			})
-			buttonRow := tview.NewFlex().SetDirection(tview.FlexColumn).AddItem(edit, 8, 0, true).AddItem(flush, 8, 0, false).AddItem(deleteBtn, 8, 0, false)
+			buttonRow := tview.NewFlex().SetDirection(tview.FlexColumn).
+				AddItem(edit, 8, 0, true).
+				AddItem(nil, 2, 0, false).
+				AddItem(flush, 8, 0, false).
+				AddItem(nil, 2, 0, false).
+				AddItem(deleteBtn, 8, 0, false)
 			card := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(info, 0, 1, false).AddItem(buttonRow, 1, 0, true)
 			card.SetBorder(true)
 			list.AddItem(card, 8, 0, false)
@@ -357,5 +475,20 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 		status.SetText("")
 		render()
 	})
-	return pages
+	return &poolPage{Primitive: pages, reload: func() {
+		load(func(err error) {
+			if err == nil {
+				render()
+			}
+		})
+	}}
 }
+
+// poolPage 包装订阅池页面，实现 Shower 接口：每次切换到该页面时自动刷新，
+// 避免订阅删除后池成员显示过期的缓存数据。
+type poolPage struct {
+	tview.Primitive
+	reload func()
+}
+
+func (p *poolPage) OnShow() { p.reload() }

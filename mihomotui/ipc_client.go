@@ -186,6 +186,29 @@ func ResetIPCClient() {
 	ipcClientSingleton = nil
 }
 
+// ========== 运行时应用结果（客户端缓存） ==========
+
+// runtimeApplyMu 保护最近一次从 daemon 同步到的运行时应用结果。
+// 该状态只用于提示"配置已保存但未生效"，不参与任何决策。
+var (
+	runtimeApplyMu  sync.RWMutex
+	runtimeApplyVal ApplyStatus
+)
+
+func setLastRuntimeApply(status ApplyStatus) {
+	runtimeApplyMu.Lock()
+	runtimeApplyVal = status
+	runtimeApplyMu.Unlock()
+}
+
+// LastRuntimeApply 返回最近一次已知的运行时应用结果。
+// HasApplied 为 false 表示本次连接尚未获得过该状态。
+func LastRuntimeApply() ApplyStatus {
+	runtimeApplyMu.RLock()
+	defer runtimeApplyMu.RUnlock()
+	return runtimeApplyVal
+}
+
 // ========== 配置 ==========
 
 // IPCGetConfig 从服务端获取配置
@@ -198,6 +221,7 @@ func (c *IPCClient) IPCGetConfig() (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("解析配置响应失败: %w", err)
 	}
+	setLastRuntimeApply(cfgResp.RuntimeApply)
 	credentials, err := c.IPCGetMihomoAPICredentials()
 	if err != nil {
 		return nil, fmt.Errorf("获取 mihomo API 凭据失败: %w", err)
@@ -350,12 +374,6 @@ func (c *IPCClient) IPCDeleteSubscription(name string) error {
 	return err
 }
 
-// IPCApplySubscription 应用订阅（生成 mihomo 配置）
-func (c *IPCClient) IPCApplySubscription(name string) error {
-	_, err := c.requestJSON(http.MethodPost, "/api/v1/subscriptions/"+url.PathEscape(name)+"/apply", nil, nil)
-	return err
-}
-
 // ========== mihomo 管理 ==========
 
 // IPCGetMihomoStatus 获取 mihomo 进程状态
@@ -368,6 +386,14 @@ func (c *IPCClient) IPCGetMihomoStatus() (*MihomoStatusResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("解析状态响应失败: %w", err)
 	}
+	setLastRuntimeApply(ApplyStatus{
+		Applied:    result.ConfigApplied,
+		Stage:      result.ConfigApplyStage,
+		Error:      result.ConfigApplyError,
+		Reason:     result.ConfigApplyReason,
+		At:         result.ConfigApplyAt,
+		HasApplied: result.ConfigApplyReason != "" || result.ConfigApplyAt != "",
+	})
 	// TUI 直接调用 mihomo REST API；状态查询同时同步 daemon 记录的实际
 	// 运行版本，确保长时间打开的客户端在服务端重启/换核后不会使用旧快照。
 	if result.Running && result.RunningVersion != "" {
@@ -627,34 +653,52 @@ func (c *IPCClient) IPCImportSubscriptionContent(name, source string, sourceType
 	return c.IPCImportSubscriptionWithRequest(SubscriptionImportRequest{Name: name, URL: source, SourceType: sourceType, Content: content, UseLocalProxy: useProxy})
 }
 
-// IPCCreateSubscriptionPool 创建顺序主备订阅池。
-func (c *IPCClient) IPCCreateSubscriptionPool(req SubscriptionPoolRequest) (string, error) {
+// IPCCreateSubscriptionPool 创建订阅池。
+// 返回值中的 Applied/ApplyStage/ApplyError 描述保存后运行时是否真正生效。
+func (c *IPCClient) IPCCreateSubscriptionPool(req SubscriptionPoolRequest) (*SubscriptionPoolUpdateResponse, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	resp, err := c.requestJSON(http.MethodPost, "/api/v1/subscription-pools", body, nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	result, err := unmarshalData[map[string]string](resp)
-	return result["id"], err
+	result, err := unmarshalData[SubscriptionPoolUpdateResponse](resp)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
-// IPCUpdateSubscriptionPool 更新成员顺序、活动源和刷新策略。
-func (c *IPCClient) IPCUpdateSubscriptionPool(id string, req SubscriptionPoolRequest) error {
+// IPCUpdateSubscriptionPool 更新成员顺序、活动源、运行模式和刷新策略。
+func (c *IPCClient) IPCUpdateSubscriptionPool(id string, req SubscriptionPoolRequest) (*SubscriptionPoolUpdateResponse, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	_, err = c.requestJSON(http.MethodPut, "/api/v1/subscription-pools/"+url.PathEscape(id), body, nil)
-	return err
+	resp, err := c.requestJSON(http.MethodPut, "/api/v1/subscription-pools/"+url.PathEscape(id), body, nil)
+	if err != nil {
+		return nil, err
+	}
+	result, err := unmarshalData[SubscriptionPoolUpdateResponse](resp)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // IPCDeleteSubscriptionPool 删除订阅池，不删除其中缓存的订阅源。
-func (c *IPCClient) IPCDeleteSubscriptionPool(id string) error {
-	_, err := c.requestJSON(http.MethodDelete, "/api/v1/subscription-pools/"+url.PathEscape(id), nil, nil)
-	return err
+func (c *IPCClient) IPCDeleteSubscriptionPool(id string) (*SubscriptionPoolUpdateResponse, error) {
+	resp, err := c.requestJSON(http.MethodDelete, "/api/v1/subscription-pools/"+url.PathEscape(id), nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	result, err := unmarshalData[SubscriptionPoolUpdateResponse](resp)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // IPCRefreshSubscriptionPool 立即刷新订阅池全部远程成员。

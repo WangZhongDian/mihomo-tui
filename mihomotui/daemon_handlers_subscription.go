@@ -129,23 +129,13 @@ func (d *Daemon) importSubscriptionContent(requestedName, source string, sourceT
 			cfg.Subscriptions = append(cfg.Subscriptions, meta)
 			idx = len(cfg.Subscriptions) - 1
 		}
-		pool := cfg.ensureDefaultPool()
-		present := false
-		for _, member := range pool.Members {
-			if member == id {
-				present = true
-				break
-			}
-		}
-		if !present {
-			pool.Members = append(pool.Members, id)
-		}
-		if pool.ActiveMemberID == "" {
-			pool.ActiveMemberID = id
-		}
-		// 保持遗留字段可用。
+		// 新订阅不自动进入任何订阅池：订阅池是显式的运行配置，归属由用户在
+		// 订阅池页面决定。未归入启用池的订阅在订阅页面显示"未分配"，
+		// 也不触发配置重载（否则会因没有可用池而生成失败）。
+		cfg.SubscriptionPoolsInitialized = true
+		// 保持遗留字段自洽；它不再决定运行来源。
 		cfg.ActiveSubscription = idx
-		shouldApply = pool.ActiveMemberID == id && pool.Enabled
+		shouldApply = cfg.subscriptionAffectsRuntime(id)
 		return nil
 	})
 	if err != nil {
@@ -167,6 +157,7 @@ func (d *Daemon) createManualSubscription(requestedName string) error {
 	}
 	_, err := UpdateGlobalConfig(func(cfg *Config) error {
 		name = uniqueSubscriptionName(name, "", cfg)
+		cfg.SubscriptionPoolsInitialized = true
 		cfg.Subscriptions = append(cfg.Subscriptions, SubscriptionMeta{
 			ID:        newSubscriptionID(),
 			Name:      name,
@@ -221,11 +212,9 @@ func (d *Daemon) refreshSubscription(identifier string) error {
 		item.FailureCount = 0
 		item.UsedGB = result.UsedGB
 		applySubscriptionFetchMetadata(item, result)
-		for _, pool := range next.SubscriptionPools {
-			if pool.ActiveMemberID == item.ID && pool.Enabled {
-				active = true
-			}
-		}
+		// 合并池的任意成员、主备池的活动成员都会改变运行配置；
+		// 旧判定只看 ActiveMemberID，导致合并池除首个成员外刷新后不生效。
+		active = next.subscriptionAffectsRuntime(item.ID)
 		return nil
 	})
 	if err != nil {
@@ -309,8 +298,11 @@ func (d *Daemon) syncSubscriptionMetadataFromProviders() {
 	}
 	changed := false
 	_, err = UpdateGlobalConfig(func(next *Config) error {
+		providerNames := providerNamesFor(active)
 		for i, sub := range active {
-			provider, ok := providers[fmt.Sprintf("provider%d", i+1)]
+			// provider 名由订阅稳定 ID 推导，必须与 buildProxyConfig 用同一套规则；
+			// 否则额度同步会全部落空。
+			provider, ok := providers[providerNames[i]]
 			if !ok || provider.SubscriptionInfo == nil {
 				continue
 			}
@@ -362,7 +354,7 @@ func (d *Daemon) failoverSubscription(failedID string, cause error) {
 			}
 			for _, candidate := range pool.Members {
 				ci := cfg.FindSubscriptionByID(candidate)
-				if candidate == failedID || ci < 0 || !hasSubscriptionCache(cfg.Subscriptions[ci]) || cfg.Subscriptions[ci].FailureCount >= subscriptionFailureThreshold {
+				if candidate == failedID || ci < 0 || cfg.Subscriptions[ci].Disabled || !hasSubscriptionCache(cfg.Subscriptions[ci]) || cfg.Subscriptions[ci].FailureCount >= subscriptionFailureThreshold {
 					continue
 				}
 				pool.ActiveMemberID = candidate
@@ -439,6 +431,9 @@ func (d *Daemon) handleSubscriptionDetail(w http.ResponseWriter, r *http.Request
 				return fmt.Errorf("本地文件或粘贴订阅不能修改为远程链接，请重新导入")
 			}
 			item.Name = newName
+			if req.Disabled != nil {
+				item.Disabled = *req.Disabled
+			}
 			item.UpdatedAt = timestampNow()
 			updated = *item
 			return nil
@@ -460,12 +455,16 @@ func (d *Daemon) handleSubscriptionDetail(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusOK, ok("订阅已刷新"))
 	case http.MethodDelete:
 		var resolvedName string
+		var affected bool
 		_, err := UpdateGlobalConfig(func(cfg *Config) error {
 			idx := cfg.FindSubscriptionByIdentifier(name)
 			if idx < 0 {
 				return fmt.Errorf("订阅不存在: %s", name)
 			}
 			resolvedName = cfg.Subscriptions[idx].Name
+			// 删除参与运行的订阅会改变 provider 集合，必须重新应用；
+			// 否则 config.yaml 会继续指向已被删除的缓存文件。
+			affected = cfg.subscriptionAffectsRuntime(cfg.Subscriptions[idx].ID)
 			return cfg.RemoveSubscription(resolvedName)
 		})
 		if err != nil {
@@ -477,35 +476,14 @@ func (d *Daemon) handleSubscriptionDetail(w http.ResponseWriter, r *http.Request
 			return
 		}
 		Infof("订阅已删除: name=%s", resolvedName)
+		if affected {
+			if report := d.reconcileLatest("subscription-delete"); !report.Applied {
+				Warnf("删除订阅后应用配置失败: stage=%s err=%s", report.Stage, report.Err)
+			}
+		}
 		writeJSON(w, http.StatusOK, ok(nil))
 	case http.MethodPost:
-		if action != "apply" {
-			writeError(w, http.StatusBadRequest, fmt.Errorf("未知操作: %s", action))
-			return
-		}
-		var resolvedName string
-		_, err := UpdateGlobalConfig(func(cfg *Config) error {
-			idx := cfg.FindSubscriptionByIdentifier(name)
-			if idx < 0 {
-				return fmt.Errorf("订阅不存在: %s", name)
-			}
-			resolvedName = cfg.Subscriptions[idx].Name
-			return cfg.SetActiveSubscription(resolvedName)
-		})
-		if err != nil {
-			if resolvedName == "" {
-				writeError(w, http.StatusNotFound, err)
-			} else {
-				writeError(w, http.StatusInternalServerError, fmt.Errorf("保存订阅变更失败: %w", err))
-			}
-			return
-		}
-		// mihomo API 客户端由 reconcile 流程按最新配置重建
-		if report := d.reconcileLatest("subscription-apply"); !report.Applied {
-			writeError(w, http.StatusInternalServerError, fmt.Errorf("应用订阅失败: %s", report.Err))
-			return
-		}
-		writeJSON(w, http.StatusOK, ok(nil))
+		writeError(w, http.StatusBadRequest, fmt.Errorf("未知操作: %s", action))
 	default:
 		writeError(w, http.StatusMethodNotAllowed, fmt.Errorf("方法不允许"))
 	}

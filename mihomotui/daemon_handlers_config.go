@@ -13,7 +13,11 @@ func (d *Daemon) handleConfig(w http.ResponseWriter, r *http.Request) {
 		// 必须通过受 IPC peer credential 保护的专用端点获取。
 		cfg := *GlobalConfig()
 		cfg.Mihomo.Secret = ""
-		writeJSON(w, http.StatusOK, ok(ConfigResponse{Config: cfg}))
+		report, reason, at := d.LastApplyReport()
+		writeJSON(w, http.StatusOK, ok(ConfigResponse{Config: cfg, RuntimeApply: ApplyStatus{
+			Applied: report.Applied, Stage: report.Stage, Error: report.Err,
+			Reason: reason, At: at, HasApplied: reason != "",
+		}}))
 	case http.MethodPost:
 		var req Config
 		if err := readJSON(r, &req); err != nil {

@@ -24,10 +24,17 @@ func buildSubCardText() string {
 		byID[sub.ID] = sub
 	}
 	var lines []string
-	for _, pool := range cfg.SubscriptionPools {
-		if !pool.Enabled {
-			continue
+	// 最近一次运行时应用失败时，内核仍在跑上一次成功生成的旧配置，
+	// 首页必须先给出这条结论，避免用户把旧节点误认为当前配置。
+	if status := mihomotui.LastRuntimeApply(); status.HasApplied && !status.Applied {
+		reason := strings.TrimSpace(status.Error)
+		if reason == "" {
+			reason = "未知原因"
 		}
+		lines = append(lines, fmt.Sprintf("[red]⚠ 配置未生效（%s）：%s[-]", status.Stage, reason))
+		lines = append(lines, "[red]   内核可能仍在运行旧配置，请在订阅池页面修正后重新保存[-]", "")
+	}
+	for _, pool := range cfg.SubscriptionPools {
 		mode := "主备"
 		if pool.Mode == mihomotui.SubscriptionPoolModeMerge {
 			mode = "合并"
@@ -36,17 +43,20 @@ func buildSubCardText() string {
 		if pool.Degraded {
 			state = "[yellow]▲[-]"
 		}
-		lines = append(lines, fmt.Sprintf("%s [::b]%s[-]  (%s)", state, pool.Name, mode))
-		available := 0
-		for _, id := range pool.Members {
-			if sub, ok := byID[id]; ok && sub.CacheFile != "" {
-				available++
-			}
+		if !pool.Enabled {
+			// 禁用的池同样列出：否则用户只会看到"暂无已启用订阅池"，
+			// 却不知道成员仍在池里但没有参与运行。
+			state = "[red]■[-]"
 		}
+		lines = append(lines, fmt.Sprintf("%s [::b]%s[-]  (%s)", state, SanitizeDisplayText(pool.Name), mode))
+		availability := cfg.PoolAvailability(pool)
 		if pool.Mode == mihomotui.SubscriptionPoolModeMerge {
-			lines = append(lines, fmt.Sprintf("  已合并 %d / %d 个可用订阅源", available, len(pool.Members)))
+			lines = append(lines, fmt.Sprintf("  参与合并 %d / %d 个订阅源", availability.Available, availability.Total))
 		} else if _, ok := byID[pool.ActiveMemberID]; !ok {
 			lines = append(lines, "  [yellow]当前活动源缺失[-]")
+		}
+		if !pool.Enabled {
+			lines = append(lines, "  [red]此订阅池已禁用：成员不会生成 provider[-]")
 		}
 		// 在池摘要下逐行展示成员，方便从首页直接确认参与运行的订阅源健康和额度。
 		for _, id := range pool.Members {
@@ -55,14 +65,17 @@ func buildSubCardText() string {
 				continue
 			}
 			status := "[green]正常[-]"
-			if sub.CacheFile == "" || sub.FailureCount > 0 {
-				status = "[red]异常[-]"
+			if !mihomotui.SubscriptionCacheAvailable(sub) {
+				status = "[red]不可用[-]"
+				if sub.FailureCount > 0 {
+					status = fmt.Sprintf("[red]连续失败 %d[-]", sub.FailureCount)
+				}
 			}
 			current := ""
 			if pool.Mode != mihomotui.SubscriptionPoolModeMerge && id == pool.ActiveMemberID {
 				current = " [::b](当前)[-]"
 			}
-			line := fmt.Sprintf("  • %s%s · %s", sub.Name, current, status)
+			line := fmt.Sprintf("  • %s%s · %s", SanitizeDisplayText(sub.Name), current, status)
 			if remaining := subscriptionRemainingText(sub); remaining != "" {
 				line += " · 剩余 " + remaining
 			}
@@ -165,13 +178,18 @@ func NewDashboard(app *tview.Application) (Page, func()) {
 					}
 					delayColor := DelayColor(activeNode.Delay)
 					delayText := DelayText(activeNode.Delay)
+					// 节点/策略组名来自订阅，可能含国旗 emoji：按显示宽度归一化，
+					// 否则部分终端会把国旗渲染成 4 格并与后面的文字重叠。
+					nodeName := SanitizeDisplayText(activeNode.Name)
+					nodeType := SanitizeDisplayText(activeNode.Type)
+					groupLabel := SanitizeDisplayText(group.Name)
 					text = fmt.Sprintf(
 						" [%s::b]●[-:-:-] %s\n"+
 							"    %s\n\n"+
 							" 代理组: [::u]%s[-:-:-]\n\n"+
 							" 节点: [%s]●[-] %s [%s]%s[-]",
-						mihomotui.ColorOK, activeNode.Name, activeNode.Type, group.Name,
-						mihomotui.ColorOK, activeNode.Name, delayColor, delayText,
+						mihomotui.ColorOK, nodeName, nodeType, groupLabel,
+						mihomotui.ColorOK, nodeName, delayColor, delayText,
 					)
 				} else {
 					text = fmt.Sprintf(
@@ -203,8 +221,9 @@ func NewDashboard(app *tview.Application) (Page, func()) {
 							"    %s\n\n"+
 							" 代理组: [::u]%s[-:-:-]\n\n"+
 							" 模式: 自动切换（%s）",
-						mihomotui.ColorOK, group.Name, group.Type, group.Name,
-						group.Type,
+						mihomotui.ColorOK,
+						SanitizeDisplayText(group.Name), SanitizeDisplayText(group.Type),
+						SanitizeDisplayText(group.Name), SanitizeDisplayText(group.Type),
 					)
 				} else {
 					var activeNode *mihomotui.ProxyNode
@@ -226,13 +245,18 @@ func NewDashboard(app *tview.Application) (Page, func()) {
 					delayColor := DelayColor(activeNode.Delay)
 					delayText := DelayText(activeNode.Delay)
 
+					// 节点/策略组名来自订阅，可能含国旗 emoji：按显示宽度归一化，
+					// 否则部分终端会把国旗渲染成 4 格并与后面的文字重叠。
+					nodeName := SanitizeDisplayText(activeNode.Name)
+					nodeType := SanitizeDisplayText(activeNode.Type)
+					groupLabel := SanitizeDisplayText(group.Name)
 					text = fmt.Sprintf(
 						" [%s::b]●[-:-:-] %s\n"+
 							"    %s\n\n"+
 							" 代理组: [::u]%s[-:-:-]\n\n"+
 							" 节点: [%s]●[-] %s [%s]%s[-]",
-						mihomotui.ColorOK, activeNode.Name, activeNode.Type, group.Name,
-						mihomotui.ColorOK, activeNode.Name, delayColor, delayText,
+						mihomotui.ColorOK, nodeName, nodeType, groupLabel,
+						mihomotui.ColorOK, nodeName, delayColor, delayText,
 					)
 				}
 			}
@@ -363,6 +387,10 @@ func NewDashboard(app *tview.Application) (Page, func()) {
 				return
 			case <-ticker.C:
 				updateNodeCard()
+				// 同步 daemon 的运行时应用结果，使"配置未生效"提示能随状态变化。
+				if client, cerr := mihomotui.GetIPCClient(); cerr == nil {
+					_, _ = client.IPCGetMihomoStatus()
+				}
 				app.QueueUpdateDraw(func() { subCard.SetText(buildSubCardText()) })
 			}
 		}

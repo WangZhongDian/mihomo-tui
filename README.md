@@ -16,6 +16,7 @@ mihomo-tui is a terminal UI and daemon management tool for [mihomo](https://gith
 - **Latency Testing** — Batch node latency tests with visual result sorting
 - **System Proxy** — One-click toggle for system proxy (HTTP/SOCKS5)
 - **TUN Mode** — Support for TUN mode and routing configuration
+- **Group/VPN Bypass** — In System Settings, add IP/CIDR/domains to TUN `route-exclude-address` to fix NetBird and similar STUN issues
 - **Log Viewer** — Real-time scrolling logs with filtering and pause support
 - **systemd Service** — Built-in service install/uninstall with auto-start support
 - **Mouse Support** — Clickable buttons, page switching, and node selection via mouse
@@ -75,6 +76,10 @@ mihomo-tui — mihomo terminal UI and daemon manager
 Usage:
   mihomo-tui [options]                           Start the TUI client
   mihomo-tui server [-d <directory>]             Start the background IPC service
+  mihomo-tui start                               Start the mihomo kernel (requires IPC; root when daemon runs as root)
+  mihomo-tui stop                                Stop the mihomo kernel (requires IPC; root when daemon runs as root)
+  mihomo-tui restart                             Restart the mihomo kernel (requires IPC; root when daemon runs as root)
+  mihomo-tui status                              Show mihomo kernel status (requires IPC; exit 3 when stopped)
   mihomo-tui subscription import <import option> Import a subscription for daemon takeover
   mihomo-tui install_service                     Install the systemd service (root required)
   mihomo-tui uninstall                           Uninstall the systemd service (root required)
@@ -117,10 +122,16 @@ When TUN is enabled, mihomo-tui installs IPv4 return-path protection before star
 ### Common Commands
 
 ```bash
+# Check / start / stop the mihomo kernel (IPC daemon must already be running)
+mihomo-tui status
+sudo mihomo-tui start
+sudo mihomo-tui stop
+sudo mihomo-tui restart
+
 # Check service status
 sudo systemctl status mihomo-tui
 
-# Stop / Restart service
+# Stop / restart the systemd service (also affects the IPC daemon)
 sudo systemctl stop mihomo-tui
 sudo systemctl restart mihomo-tui
 

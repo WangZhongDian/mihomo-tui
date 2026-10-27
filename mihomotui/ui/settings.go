@@ -11,6 +11,92 @@ import (
 	"mihomotui/mihomotui"
 )
 
+// labeledButton 是一个自定义 FormItem：左边显示标签，右边是一个按钮，
+// 用于在表单里实现"Tun排除地址: [管理地址列表]"这种布局。
+type labeledButton struct {
+	*tview.Box
+	label      string
+	btn        *tview.Button
+	finished   func(tcell.Key)
+	disabled   bool
+	labelWidth int
+	labelColor tcell.Color
+}
+
+func newLabeledButton(label, btnLabel string, selected func()) *labeledButton {
+	lb := &labeledButton{
+		Box:   tview.NewBox(),
+		label: label,
+		btn:   tview.NewButton(btnLabel),
+	}
+	lb.btn.SetSelectedFunc(selected)
+	lb.Box.Primitive = lb
+	return lb
+}
+
+// --- tview.FormItem 接口实现 ---
+func (lb *labeledButton) GetLabel() string { return lb.label }
+func (lb *labeledButton) SetFormAttributes(labelWidth int, labelColor, bgColor, fieldTextColor, fieldBgColor tcell.Color) tview.FormItem {
+	lb.labelWidth = labelWidth
+	lb.labelColor = labelColor
+	lb.Box.SetBackgroundColor(bgColor)
+	return lb
+}
+func (lb *labeledButton) GetFieldWidth() int  { return 0 }
+func (lb *labeledButton) GetFieldHeight() int { return 1 }
+func (lb *labeledButton) SetFinishedFunc(handler func(tcell.Key)) tview.FormItem {
+	lb.finished = handler
+	return lb
+}
+func (lb *labeledButton) SetDisabled(disabled bool) tview.FormItem {
+	lb.disabled = disabled
+	lb.btn.SetDisabled(disabled)
+	return lb
+}
+func (lb *labeledButton) GetDisabled() bool { return lb.disabled }
+
+// --- tview.Primitive 接口实现 ---
+func (lb *labeledButton) Draw(screen tcell.Screen) {
+	lb.Box.DrawForSubclass(screen, lb)
+	x, y, w, _ := lb.Box.GetInnerRect()
+	// 用和其他表单项相同的 labelWidth 和颜色画标签
+	labelW := lb.labelWidth
+	if labelW > w {
+		labelW = w
+	}
+	tview.Print(screen, lb.label, x, y, labelW, tview.AlignLeft, lb.labelColor)
+	// 把按钮放在标签右边，宽度自适应文字
+	btnW := tview.TaggedStringWidth(lb.btn.GetLabel()) + 4 // 文字宽度 + 内边距
+	if btnW > w-labelW {
+		btnW = w - labelW
+	}
+	if btnW < 1 {
+		btnW = 1
+	}
+	lb.btn.SetRect(x+labelW, y, btnW, 1)
+	lb.btn.Draw(screen)
+}
+func (lb *labeledButton) InputHandler() func(*tcell.EventKey, func(tview.Primitive)) {
+	// 直接把事件转发给内部按钮，Button.InputHandler 会处理 Enter（触发选中）
+	// 和 Tab/Esc（离开表单）。
+	return lb.btn.InputHandler()
+}
+func (lb *labeledButton) Focus(delegate func(p tview.Primitive)) {
+	lb.Box.Focus(delegate)
+	lb.btn.Focus(delegate)
+}
+func (lb *labeledButton) HasFocus() bool { return lb.Box.HasFocus() || lb.btn.HasFocus() }
+func (lb *labeledButton) Blur() {
+	lb.Box.Blur()
+	lb.btn.Blur()
+}
+func (lb *labeledButton) MouseHandler() func(tview.MouseAction, *tcell.EventMouse, func(tview.Primitive)) (bool, tview.Primitive) {
+	return lb.btn.MouseHandler()
+}
+func (lb *labeledButton) PasteHandler() func(string, func(tview.Primitive)) {
+	return lb.btn.PasteHandler()
+}
+
 // buildProgressBar 生成文本进度条，percent 为 0-100
 func buildProgressBar(percent int) string {
 	width := 20
@@ -129,6 +215,13 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 		return nil
 	}
 
+	// systemForm 稍后赋值；排除地址管理弹窗关闭时需把焦点还回去。
+	var systemForm *tview.Form
+	// openExcludeAddressManager 在后面（pageReady = true 之后）赋值，
+	// 避免函数体引用尚未声明的局部变量。
+	var openExcludeAddressManager func()
+	var openFakeIPFilterManager func()
+
 	// bindInputSave 为表单输入框设置失焦保存：仅在内容变化时提交；
 	// 输入无法解析或保存失败时恢复显示为当前生效值，避免界面与实际配置不一致。
 	bindInputSave := func(form *tview.Form, bindings map[string]inputBinding) {
@@ -221,7 +314,7 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 	// ---------- 系统设置 ----------
 	// 注意：控件回调不再预写页面配置快照，"原始值"一律以本地缓存 GlobalConfig()
 	// （每次保存成功后与服务端同步）为准；保存失败时据此恢复控件显示。
-	systemForm := tview.NewForm()
+	systemForm = tview.NewForm()
 	systemForm.AddCheckbox("开机启动", cfg.System.AutoStart, func(checked bool) {
 		doSave("开机启动",
 			func(fresh *mihomotui.Config) { fresh.System.AutoStart = checked },
@@ -261,6 +354,16 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 					}
 				})
 		}).
+		AddFormItem(newLabeledButton("Tun排除地址", "管理地址列表", func() {
+			if openExcludeAddressManager != nil {
+				openExcludeAddressManager()
+			}
+		})).
+		AddFormItem(newLabeledButton("Fake-IP过滤", "管理域名列表", func() {
+			if openFakeIPFilterManager != nil {
+				openFakeIPFilterManager()
+			}
+		})).
 		AddDropDown("语言", []string{"简体中文", "English"}, langIdx, func(option string, optionIndex int) {
 			language := "zh-CN"
 			if optionIndex == 1 {
@@ -411,19 +514,24 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 	bindInputSave(mihomoForm, map[string]inputBinding{
 		"HTTP 端口": portBinding(
 			func(fresh *mihomotui.Config, v int) { fresh.Mihomo.HTTPPort = v },
-			func(c *mihomotui.Config) int { return c.Mihomo.HTTPPort }),
+			func(c *mihomotui.Config) int { return c.Mihomo.HTTPPort },
+		),
 		"SOCKS5 端口": portBinding(
 			func(fresh *mihomotui.Config, v int) { fresh.Mihomo.SOCKS5Port = v },
-			func(c *mihomotui.Config) int { return c.Mihomo.SOCKS5Port }),
+			func(c *mihomotui.Config) int { return c.Mihomo.SOCKS5Port },
+		),
 		"混合端口": portBinding(
 			func(fresh *mihomotui.Config, v int) { fresh.Mihomo.MixedPort = v },
-			func(c *mihomotui.Config) int { return c.Mihomo.MixedPort }),
+			func(c *mihomotui.Config) int { return c.Mihomo.MixedPort },
+		),
 		"Redir 端口": portBinding(
 			func(fresh *mihomotui.Config, v int) { fresh.Mihomo.RedirPort = v },
-			func(c *mihomotui.Config) int { return c.Mihomo.RedirPort }),
+			func(c *mihomotui.Config) int { return c.Mihomo.RedirPort },
+		),
 		"TProxy 端口": portBinding(
 			func(fresh *mihomotui.Config, v int) { fresh.Mihomo.TProxyPort = v },
-			func(c *mihomotui.Config) int { return c.Mihomo.TProxyPort }),
+			func(c *mihomotui.Config) int { return c.Mihomo.TProxyPort },
+		),
 		"延迟测试链接": {
 			apply: func(fresh *mihomotui.Config, text string) error {
 				if strings.TrimSpace(text) == "" {
@@ -526,5 +634,261 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 	// 页面构建完成，此后的控件回调均为真实用户操作，允许保存。
 	pageReady = true
 
+	// ==================== 排除地址管理弹窗定义 ====================
+	// openExcludeAddressManager 打开排除地址管理弹窗：支持增删 IP/CIDR/域名。
+	openExcludeAddressManager = func() {
+		var input *tview.InputField
+		ShowOverlay(app, settingsPages, "exclude-address-manager", "排除地址管理（Esc 关闭）", func(close func()) (tview.Primitive, tview.Primitive) {
+			input = tview.NewInputField().
+				SetLabel("新增地址 ").
+				SetFieldWidth(40).
+				SetPlaceholder("IP / CIDR / 域名，例如 10.64.0.0/10 或 netbird.example.com")
+			input.SetBorder(true).SetTitle(" 输入 ")
+
+			addBtn := tview.NewButton(" 添加 ")
+			closeBtn := tview.NewButton(" 关闭 ")
+			hint := tview.NewTextView().
+				SetDynamicColors(true).
+				SetText("[" + mihomotui.ColorMuted + "]每条一个地址；非空时会自动写入 TUN route-exclude-address[-]")
+
+			list := tview.NewFlex().SetDirection(tview.FlexRow)
+			list.SetBorder(true).SetTitle(" 排除地址列表 ")
+
+			var refreshList func()
+			commitAddrs := func(mutate func(addrs []string) []string) {
+				go func() {
+					resp, err := mihomotui.MutateServerConfig(func(fresh *mihomotui.Config) {
+						fresh.ExcludeAddresses = mutate(append([]string(nil), fresh.ExcludeAddresses...))
+					})
+					app.QueueUpdateDraw(func() {
+						if err != nil {
+							showModal("保存失败", err.Error())
+							return
+						}
+						if resp != nil && !resp.Applied {
+							mihomotui.Warnf("排除地址已保存，但应用失败（%s）: %s", resp.ApplyStage, resp.ApplyError)
+						}
+						refreshList()
+					})
+				}()
+			}
+
+			refreshList = func() {
+				addrs := mihomotui.GlobalConfig().ExcludeAddresses
+				list.Clear()
+				if len(addrs) == 0 {
+					list.AddItem(tview.NewTextView().SetText("  (空) 点击上方添加 IP/CIDR/域名"), 1, 0, false)
+					return
+				}
+				for i, addr := range addrs {
+					idx, entry := i, addr
+					info := tview.NewTextView().SetText(fmt.Sprintf(" %d. %s", idx+1, entry))
+					del := tview.NewButton(" 删除 ")
+					del.SetSelectedFunc(func() {
+						ShowConfirmModal(app, settingsPages, "确认删除", entry, func() {
+							commitAddrs(func(cur []string) []string {
+								out := make([]string, 0, len(cur))
+								for _, v := range cur {
+									if v != entry {
+										out = append(out, v)
+									}
+								}
+								return out
+							})
+						})
+					})
+					row := tview.NewFlex().
+						AddItem(info, 0, 1, false).
+						AddItem(del, 10, 0, false)
+					list.AddItem(row, 1, 0, false)
+				}
+			}
+
+			doAdd := func() {
+				raw := strings.TrimSpace(input.GetText())
+				if raw == "" {
+					showModal("添加失败", "请输入 IP、CIDR 或域名")
+					return
+				}
+				entries := mihomotui.ParseExcludeAddresses(raw)
+				if len(entries) == 0 {
+					showModal("添加失败", "请输入有效地址")
+					return
+				}
+				for _, entry := range entries {
+					if !mihomotui.IsValidExcludeAddress(entry) {
+						showModal("添加失败", fmt.Sprintf("非法地址（需为 IP/CIDR/域名）: %s", entry))
+						return
+					}
+				}
+				commitAddrs(func(cur []string) []string {
+					seen := map[string]bool{}
+					for _, v := range cur {
+						seen[v] = true
+					}
+					for _, entry := range entries {
+						if !seen[entry] {
+							cur = append(cur, entry)
+							seen[entry] = true
+						}
+					}
+					return cur
+				})
+				input.SetText("")
+			}
+			addBtn.SetSelectedFunc(doAdd)
+			input.SetDoneFunc(func(key tcell.Key) {
+				if key == tcell.KeyEnter {
+					doAdd()
+				}
+			})
+
+			closeBtn.SetSelectedFunc(close)
+
+			topBar := tview.NewFlex().
+				AddItem(input, 0, 1, true).
+				AddItem(addBtn, 10, 0, false)
+			bottomBar := tview.NewFlex().
+				AddItem(hint, 0, 1, false).
+				AddItem(closeBtn, 10, 0, false)
+			body := tview.NewFlex().SetDirection(tview.FlexRow).
+				AddItem(topBar, 3, 0, true).
+				AddItem(list, 0, 1, false).
+				AddItem(bottomBar, 1, 0, false)
+
+			refreshList()
+			return body, input
+		})
+	}
+
+	// ==================== Fake-IP 过滤管理弹窗 ====================
+	// 命中 fake-ip-filter 的域名返回真实 IP（不走 fake-ip），用于组网/STUN 等
+	// 需要真实出口 IP 的场景。内置默认仅 *.lan 与 localhost.ptlogin2.qq.com，
+	// 此处管理用户追加的自定义域名。
+	openFakeIPFilterManager = func() {
+		var input *tview.InputField
+		ShowOverlay(app, settingsPages, "fakeip-filter-manager", "Fake-IP 过滤（Esc 关闭）", func(close func()) (tview.Primitive, tview.Primitive) {
+			input = tview.NewInputField().
+				SetLabel("新增域名 ").
+				SetFieldWidth(40).
+				SetPlaceholder("域名 / *.域名 / +.域名，例如 +.youmetme.wang")
+			input.SetBorder(true).SetTitle(" 输入 ")
+
+			addBtn := tview.NewButton(" 添加 ")
+			closeBtn := tview.NewButton(" 关闭 ")
+			hint := tview.NewTextView().
+				SetDynamicColors(true).
+				SetText("[" + mihomotui.ColorMuted + "]命中的域名返回真实 IP（不走 fake-ip）；默认已含 *.lan 与 localhost.ptlogin2.qq.com[-]")
+
+			list := tview.NewFlex().SetDirection(tview.FlexRow)
+			list.SetBorder(true).SetTitle(" 自定义过滤域名 ")
+
+			var refreshList func()
+			commitFilter := func(mutate func(addrs []string) []string) {
+				go func() {
+					resp, err := mihomotui.MutateServerConfig(func(fresh *mihomotui.Config) {
+						fresh.FakeIPFilter = mutate(append([]string(nil), fresh.FakeIPFilter...))
+					})
+					app.QueueUpdateDraw(func() {
+						if err != nil {
+							showModal("保存失败", err.Error())
+							return
+						}
+						if resp != nil && !resp.Applied {
+							mihomotui.Warnf("fake-ip-filter 已保存，但应用失败（%s）: %s", resp.ApplyStage, resp.ApplyError)
+						}
+						refreshList()
+					})
+				}()
+			}
+
+			refreshList = func() {
+				addrs := mihomotui.GlobalConfig().FakeIPFilter
+				list.Clear()
+				if len(addrs) == 0 {
+					list.AddItem(tview.NewTextView().SetText("  (空) 默认仅 *.lan 与 localhost.ptlogin2.qq.com"), 1, 0, false)
+					return
+				}
+				for i, addr := range addrs {
+					idx, entry := i, addr
+					info := tview.NewTextView().SetText(fmt.Sprintf(" %d. %s", idx+1, entry))
+					del := tview.NewButton(" 删除 ")
+					del.SetSelectedFunc(func() {
+						ShowConfirmModal(app, settingsPages, "确认删除", entry, func() {
+							commitFilter(func(cur []string) []string {
+								out := make([]string, 0, len(cur))
+								for _, v := range cur {
+									if v != entry {
+										out = append(out, v)
+									}
+								}
+								return out
+							})
+						})
+					})
+					row := tview.NewFlex().
+						AddItem(info, 0, 1, false).
+						AddItem(del, 10, 0, false)
+					list.AddItem(row, 1, 0, false)
+				}
+			}
+
+			doAdd := func() {
+				raw := strings.TrimSpace(input.GetText())
+				if raw == "" {
+					showModal("添加失败", "请输入域名")
+					return
+				}
+				entries := mihomotui.ParseExcludeAddresses(raw) // 复用同一分隔规则（换行/逗号/分号）
+				if len(entries) == 0 {
+					showModal("添加失败", "请输入有效域名")
+					return
+				}
+				for _, entry := range entries {
+					if !mihomotui.IsValidFakeIPFilterEntry(entry) {
+						showModal("添加失败", fmt.Sprintf("非法域名（需为域名或 *. /+. 前缀，且不能为裸 *）: %s", entry))
+						return
+					}
+				}
+				commitFilter(func(cur []string) []string {
+					seen := map[string]bool{}
+					for _, v := range cur {
+						seen[v] = true
+					}
+					for _, entry := range entries {
+						if !seen[entry] {
+							cur = append(cur, entry)
+							seen[entry] = true
+						}
+					}
+					return cur
+				})
+				input.SetText("")
+			}
+			addBtn.SetSelectedFunc(doAdd)
+			input.SetDoneFunc(func(key tcell.Key) {
+				if key == tcell.KeyEnter {
+					doAdd()
+				}
+			})
+
+			closeBtn.SetSelectedFunc(close)
+
+			topBar := tview.NewFlex().
+				AddItem(input, 0, 1, true).
+				AddItem(addBtn, 10, 0, false)
+			bottomBar := tview.NewFlex().
+				AddItem(hint, 0, 1, false).
+				AddItem(closeBtn, 10, 0, false)
+			body := tview.NewFlex().SetDirection(tview.FlexRow).
+				AddItem(topBar, 3, 0, true).
+				AddItem(list, 0, 1, false).
+				AddItem(bottomBar, 1, 0, false)
+
+			refreshList()
+			return body, input
+		})
+	}
+	// =================================================================
 	return settingsPages
 }

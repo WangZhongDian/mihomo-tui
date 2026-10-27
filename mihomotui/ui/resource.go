@@ -398,19 +398,25 @@ func newExternalResourceView(app *tview.Application) tview.Primitive {
 			AddItem(header, 12, 0, false).
 			AddItem(stateViews[key], 0, 1, false)
 		urlLine := tview.NewFlex().AddItem(inputs[key], 0, 1, true)
+		// 按钮之间用 2 格空隙隔开，避免一片蓝色连在一起。
 		actions := tview.NewFlex().
 			AddItem(saveButtons[key], 14, 0, false).
+			AddItem(nil, 2, 0, false).
 			AddItem(updateButtons[key], 16, 0, false).
+			AddItem(nil, 2, 0, false).
 			AddItem(scanButtons[key], 20, 0, false).
+			AddItem(nil, 2, 0, false).
 			AddItem(resetButtons[key], 18, 0, false).
 			AddItem(tview.NewBox(), 0, 1, false)
 		card := tview.NewFlex().SetDirection(tview.FlexRow).
 			AddItem(infoLine, 1, 0, false).
 			AddItem(urlLine, 1, 0, true).
+			AddItem(nil, 1, 0, false).
 			AddItem(actions, 1, 0, false).
+			AddItem(nil, 1, 0, false).
 			AddItem(pathViews[key], 2, 0, false)
 		card.SetBorder(true).SetTitle(" " + name + " ")
-		content.AddItem(card, 6, 0, key == "geoip")
+		content.AddItem(card, 8, 0, key == "geoip")
 	}
 
 	var showManualHelp func(key string, cause error)

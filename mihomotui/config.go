@@ -122,6 +122,9 @@ type SubscriptionMeta struct {
 	FailureCount          int                            `yaml:"failure_count,omitempty"`
 	LastCheckedAt         string                         `yaml:"last_checked_at,omitempty"`
 	UseLocalProxy         bool                           `yaml:"use_local_proxy,omitempty"`
+	// Disabled 为 true 时临时禁用此订阅：订阅池会跳过它（不参与故障切换、
+	// 不进入 mihomo 配置），但订阅本身和缓存保留，可随时重新启用。
+	Disabled bool `yaml:"disabled,omitempty" json:"disabled,omitempty"`
 }
 
 // RuleProviderSubscription 规则订阅元数据
@@ -159,9 +162,13 @@ type Config struct {
 	Mihomo                  MihomoConfig        `yaml:"mihomo"`
 	Subscriptions           []SubscriptionMeta  `yaml:"subscriptions"`
 	// SubscriptionPools owns active sources. ActiveSubscription remains for legacy compatibility.
-	SubscriptionPools         []SubscriptionPool         `yaml:"subscription_pools,omitempty"`
-	ActiveSubscription        int                        `yaml:"active_subscription"`
-	RuleProviderSubscriptions []RuleProviderSubscription `yaml:"rule_provider_subscriptions"`
+	SubscriptionPools []SubscriptionPool `yaml:"subscription_pools,omitempty"`
+	// SubscriptionPoolsInitialized 标记"历史订阅 → 默认订阅池"的一次性迁移已完成。
+	// 迁移只对缺少该标记的旧配置执行一次；此后新导入的订阅保持未分配状态，
+	// 不会被启动时的迁移悄悄塞进默认订阅池。
+	SubscriptionPoolsInitialized bool                       `yaml:"subscription_pools_initialized,omitempty"`
+	ActiveSubscription           int                        `yaml:"active_subscription"`
+	RuleProviderSubscriptions    []RuleProviderSubscription `yaml:"rule_provider_subscriptions"`
 	// CustomRules is retained for backward-compatible YAML reads; new writes use PreCustomRules.
 	CustomRules             []string          `yaml:"custom_rules,omitempty"`
 	PreCustomRules          []string          `yaml:"pre_custom_rules,omitempty"`
@@ -173,6 +180,12 @@ type Config struct {
 	DefaultProxyGroup       string            `yaml:"default_proxy_group"`
 	LogDir                  string            `yaml:"log_dir"`
 	LogLevel                string            `yaml:"log_level"`
+	// ExcludeAddresses 非空时自动合并进 TUN route-exclude-address，
+	// 用于组网/VPN（如 NetBird STUN）流量绕过 TUN，不影响普通代理场景。
+	ExcludeAddresses []string `yaml:"exclude_addresses,omitempty"`
+	// FakeIPFilter 追加到 DNS fake-ip-filter 的自定义域名（命中者返回真实 IP，不走 fake-ip）。
+	// 内置默认仅 *.lan 与 localhost.ptlogin2.qq.com；此处为用户扩展项。
+	FakeIPFilter []string `yaml:"fake_ip_filter,omitempty"`
 }
 
 // 下载 URL 常量已迁移至 constants.go，保留别名避免编译中断
@@ -382,7 +395,9 @@ func LoadConfig() Config {
 		}
 	}
 	// 迁移历史配置：所有现有订阅进入默认主备池，保持原列表优先级。
-	if len(cfg.Subscriptions) > 0 && len(cfg.SubscriptionPools) == 0 {
+	// 该迁移只执行一次（SubscriptionPoolsInitialized 标记）。合并模式与"新订阅保持未分配"
+	// 都依赖这个标记：否则每次启动都会把用户刻意留空的订阅重新塞进默认订阅池。
+	if len(cfg.Subscriptions) > 0 && len(cfg.SubscriptionPools) == 0 && !cfg.SubscriptionPoolsInitialized {
 		members := make([]string, 0, len(cfg.Subscriptions))
 		for i := range cfg.Subscriptions {
 			if cfg.Subscriptions[i].SourceType == "" {
@@ -395,7 +410,11 @@ func LoadConfig() Config {
 			active = cfg.Subscriptions[cfg.ActiveSubscription].ID
 		}
 		cfg.SubscriptionPools = []SubscriptionPool{{ID: newSubscriptionID(), Name: "默认订阅池", Members: members, ActiveMemberID: active, Enabled: true, RefreshInterval: DayInSeconds}}
+		cfg.SubscriptionPoolsInitialized = true
 		// 延后由 daemon 首次配置提交写回，避免 LoadConfig 期间递归写日志。
+	}
+	if len(cfg.SubscriptionPools) > 0 {
+		cfg.SubscriptionPoolsInitialized = true
 	}
 	// 迁移旧规则配置：历史 CustomRules 保持最高优先级，迁入前置规则。
 	cfg.ensureBuiltInRules()
