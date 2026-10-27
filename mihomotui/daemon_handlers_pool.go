@@ -80,10 +80,11 @@ func (d *Daemon) handleSubscriptionPools(w http.ResponseWriter, r *http.Request)
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		if report := d.reconcileLatest("subscription-pool-create"); !report.Applied {
-			Warnf("新建订阅池应用失败: %s", report.Err)
+		report := d.reconcileLatest("subscription-pool-create")
+		if !report.Applied {
+			Warnf("新建订阅池未生效: stage=%s err=%s", report.Stage, report.Err)
 		}
-		writeJSON(w, http.StatusOK, ok(map[string]string{"id": id}))
+		writeJSON(w, http.StatusOK, ok(SubscriptionPoolUpdateResponse{ID: id, Applied: report.Applied, ApplyStage: report.Stage, ApplyError: report.Err}))
 	default:
 		writeError(w, http.StatusMethodNotAllowed, fmt.Errorf("方法不允许"))
 	}
@@ -137,10 +138,11 @@ func (d *Daemon) handleSubscriptionPoolDetail(w http.ResponseWriter, r *http.Req
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		if report := d.reconcileLatest("subscription-pool-update"); !report.Applied {
-			Warnf("订阅池更新应用失败: %s", report.Err)
+		report := d.reconcileLatest("subscription-pool-update")
+		if !report.Applied {
+			Warnf("订阅池更新未生效: id=%s stage=%s err=%s", id, report.Stage, report.Err)
 		}
-		writeJSON(w, http.StatusOK, ok(nil))
+		writeJSON(w, http.StatusOK, ok(SubscriptionPoolUpdateResponse{ID: id, Applied: report.Applied, ApplyStage: report.Stage, ApplyError: report.Err}))
 	case http.MethodDelete:
 		_, err := UpdateGlobalConfig(func(cfg *Config) error {
 			i := cfg.FindPoolByIdentifier(id)
@@ -154,7 +156,12 @@ func (d *Daemon) handleSubscriptionPoolDetail(w http.ResponseWriter, r *http.Req
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, ok(nil))
+		// 删除启用的池同样会改变运行配置，必须重新应用，否则旧 provider 会继续留在内核里。
+		report := d.reconcileLatest("subscription-pool-delete")
+		if !report.Applied {
+			Warnf("删除订阅池未生效: id=%s stage=%s err=%s", id, report.Stage, report.Err)
+		}
+		writeJSON(w, http.StatusOK, ok(SubscriptionPoolUpdateResponse{ID: id, Applied: report.Applied, ApplyStage: report.Stage, ApplyError: report.Err}))
 	case http.MethodPost:
 		if !strings.HasSuffix(r.URL.Path, "/refresh") {
 			writeError(w, http.StatusBadRequest, fmt.Errorf("未知操作"))

@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // handleMihomoAPICredentials 向通过 IPC 授权的本地客户端提供连接 mihomo API 所需的最小凭据。
@@ -29,12 +31,55 @@ func (d *Daemon) handleMihomoStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	running, pid := d.mihomoProcess.Status()
 	cfg := GlobalConfig()
+	report, reason, at := d.LastApplyReport()
 	writeJSON(w, http.StatusOK, ok(MihomoStatusResponse{
-		Running:        running,
-		PID:            pid,
-		RunningVersion: cfg.MihomoRunningVersion,
-		VersionAt:      cfg.MihomoRunningVersionAt,
+		Running:           running,
+		PID:               pid,
+		RunningVersion:    cfg.MihomoRunningVersion,
+		VersionAt:         cfg.MihomoRunningVersionAt,
+		ConfigApplied:     report.Applied,
+		ConfigApplyStage:  report.Stage,
+		ConfigApplyError:  report.Err,
+		ConfigApplyReason: reason,
+		ConfigApplyAt:     at,
 	}))
+}
+
+// ensureRuntimeConfigFresh 在内核启动前按当前已提交配置重新生成 mihomo 配置文件。
+// 背景：配置应用失败时（例如所有订阅池都被禁用导致生成报错）旧 config.yaml 会被
+// 完整保留，若启动流程只检查"文件存在"，内核就会继续使用过期配置——表现出来就是
+// 订阅池已改为合并模式、却仍然只有第一个订阅的节点。
+// 因此这里先比对 provider 数量并记录差异，再强制重新生成；生成失败则拒绝启动，
+// 让用户看到准确原因，而不是静默跑旧配置。
+func (d *Daemon) ensureRuntimeConfigFresh(cfg *Config) error {
+	expected, err := cfg.activePoolSubscriptions()
+	if err != nil {
+		return fmt.Errorf("当前配置无法生成有效的代理来源: %w", err)
+	}
+	if fileCount, statErr := configProviderCount(cfg.MihomoConfigPath); statErr == nil && fileCount != len(expected) {
+		Warnf("检测到运行配置已过期: file=%s providers=%d 期望=%d，启动前重新生成",
+			cfg.MihomoConfigPath, fileCount, len(expected))
+	}
+	if err := cfg.GenerateMihomoConfig(); err != nil {
+		return fmt.Errorf("重新生成 mihomo 配置失败: %w", err)
+	}
+	Infof("启动前已按最新配置生成 mihomo 配置: providers=%d path=%s", len(expected), cfg.MihomoConfigPath)
+	return nil
+}
+
+// configProviderCount 读取已存在的 mihomo 配置文件中 proxy-providers 的数量。
+func configProviderCount(path string) (int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	var doc struct {
+		ProxyProviders map[string]any `yaml:"proxy-providers"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return 0, err
+	}
+	return len(doc.ProxyProviders), nil
 }
 
 func (d *Daemon) handleMihomoStart(w http.ResponseWriter, r *http.Request) {
@@ -43,14 +88,19 @@ func (d *Daemon) handleMihomoStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 先检查 mihomo 配置目录和文件是否存在
+	// 先检查 mihomo 配置目录并按当前配置重新生成配置，避免使用上次成功生成、
+	// 但已与订阅池设置不一致的旧文件。
 	cfg := GlobalConfig()
 	mihomoDir := filepath.Dir(cfg.MihomoConfigPath)
 	if _, err := os.Stat(mihomoDir); os.IsNotExist(err) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("mihomo 配置目录不存在: %s，请先在订阅页面应用订阅生成配置", mihomoDir))
 		return
 	}
-	configPath := filepath.Join(mihomoDir, "config.yaml")
+	if err := d.ensureRuntimeConfigFresh(cfg); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("无法启动内核: %w", err))
+		return
+	}
+	configPath := cfg.MihomoConfigPath
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("mihomo 配置文件不存在: %s，请先在订阅页面应用订阅生成配置", configPath))
 		return

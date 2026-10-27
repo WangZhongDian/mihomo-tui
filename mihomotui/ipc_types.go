@@ -10,6 +10,9 @@ type APIResponse struct {
 // ConfigResponse 配置查询响应
 type ConfigResponse struct {
 	Config Config `json:"config"`
+	// RuntimeApply 是 daemon 最近一次运行时应用结果，用于客户端提示
+	// "配置已提交但未生效"（例如没有可用的订阅池导致生成失败）。
+	RuntimeApply ApplyStatus `json:"runtime_apply"`
 }
 
 // ConfigUpdateResponse 配置提交响应。
@@ -45,6 +48,16 @@ type SubscriptionImportRequest struct {
 	UseLocalProxy bool               `json:"use_local_proxy,omitempty"`
 }
 
+// SubscriptionPoolUpdateResponse 订阅池保存响应。
+// 配置已持久化即返回成功；Applied/ApplyStage/ApplyError 描述保存后的运行时应用结果，
+// 使 UI 能区分"保存失败"与"保存成功但未生效"（例如池被禁用导致无法生成配置）。
+type SubscriptionPoolUpdateResponse struct {
+	ID         string `json:"id,omitempty"`
+	Applied    bool   `json:"applied"`
+	ApplyStage string `json:"apply_stage,omitempty"`
+	ApplyError string `json:"apply_error,omitempty"`
+}
+
 // SubscriptionPoolRequest 创建或更新订阅池；Members 顺序即故障切换优先级。
 type SubscriptionPoolRequest struct {
 	Name            string               `json:"name"`
@@ -72,6 +85,23 @@ type MihomoStatusResponse struct {
 	PID            int    `json:"pid"`
 	RunningVersion string `json:"running_version,omitempty"`
 	VersionAt      string `json:"version_at,omitempty"`
+	// 最近一次运行时应用结果：配置保存成功但无法生成/重载时，
+	// UI 必须能看出内核仍在跑旧配置。
+	ConfigApplied     bool   `json:"config_applied"`
+	ConfigApplyStage  string `json:"config_apply_stage,omitempty"`
+	ConfigApplyError  string `json:"config_apply_error,omitempty"`
+	ConfigApplyReason string `json:"config_apply_reason,omitempty"`
+	ConfigApplyAt     string `json:"config_apply_at,omitempty"`
+}
+
+// ApplyStatus 描述最近一次运行时配置应用结果（daemon 内存态）。
+type ApplyStatus struct {
+	Applied    bool   `json:"applied"`
+	Stage      string `json:"stage,omitempty"`
+	Error      string `json:"error,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	At         string `json:"at,omitempty"`
+	HasApplied bool   `json:"has_applied,omitempty"` // false 表示本次进程尚未执行过应用任务
 }
 
 // ProxyDelayResponse 代理延迟测试响应

@@ -9,6 +9,20 @@ import (
 	"mihomotui/mihomotui"
 )
 
+// applyFailureText 把"已保存但运行时未生效"的原因转成面向用户的说明。
+func applyFailureText(report *mihomotui.SubscriptionPoolUpdateResponse) string {
+	reason := strings.TrimSpace(report.ApplyError)
+	if reason == "" {
+		reason = "未能生成新的运行配置"
+	}
+	stage := strings.TrimSpace(report.ApplyStage)
+	if stage == "" {
+		stage = "unknown"
+	}
+	return fmt.Sprintf("配置已保存，但运行时应用失败（阶段: %s）：\n%s\n\n内核仍在运行上一次成功生成的旧配置，"+
+		"请修正后重新保存，或到【代理】页面确认节点是否已更新。", stage, reason)
+}
+
 // NewSubscriptionPoolPage 提供订阅池、主备顺序及活动源的专门管理界面。
 func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 	pages := tview.NewPages()
@@ -285,11 +299,12 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 				req := poolRequest(members, active, strings.TrimSpace(nameField.GetText()), mode, enabledBox.IsChecked(), parsed)
 				go func() {
 					client, err := mihomotui.GetIPCClient()
+					var report *mihomotui.SubscriptionPoolUpdateResponse
 					if err == nil {
 						if existing == nil {
-							_, err = client.IPCCreateSubscriptionPool(req)
+							report, err = client.IPCCreateSubscriptionPool(req)
 						} else {
-							err = client.IPCUpdateSubscriptionPool(existing.ID, req)
+							report, err = client.IPCUpdateSubscriptionPool(existing.ID, req)
 						}
 					}
 					app.QueueUpdateDraw(func() {
@@ -301,8 +316,11 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 						load(func(e error) {
 							if e != nil {
 								showModal("同步失败", e.Error())
-							} else {
-								render()
+								return
+							}
+							render()
+							if report != nil && !report.Applied {
+								showModal("保存成功，但未生效", applyFailureText(report))
 							}
 						})
 					})
@@ -329,12 +347,13 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 		}
 		for i := range cfg.SubscriptionPools {
 			pool := cfg.SubscriptionPools[i]
+			availability := cfg.PoolAvailability(pool)
 			activeName, cache := "无", "无"
 			state := "[yellow]已禁用[-]"
 			if si := cfg.FindSubscriptionByID(pool.ActiveMemberID); si >= 0 {
 				sub := cfg.Subscriptions[si]
 				activeName = sub.Name
-				if sub.CacheFile != "" {
+				if mihomotui.SubscriptionCacheAvailable(sub) {
 					cache = "可用"
 				} else {
 					cache = "缺失"
@@ -354,16 +373,29 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 			modeText := "优先级主备"
 			if pool.Mode == mihomotui.SubscriptionPoolModeMerge {
 				modeText = "合并"
-				activeName = "全部可用成员"
-				available := 0
-				for _, memberID := range pool.Members {
-					if si := cfg.FindSubscriptionByID(memberID); si >= 0 && cfg.Subscriptions[si].CacheFile != "" {
-						available++
-					}
-				}
-				cache = fmt.Sprintf("%d/%d 可用", available, len(pool.Members))
+				activeName = fmt.Sprintf("参与合并 %d/%d", availability.Available, availability.Total)
+				cache = fmt.Sprintf("%d/%d 可用", availability.Available, availability.Total)
 			}
-			content := fmt.Sprintf("[yellow::b]%s[-:-:-]  %s\n运行模式: %s    活动源: %s    本地缓存: %s\n成员: %d    刷新间隔: %d 秒\n最近切换: %s\n原因: %s", pool.Name, state, modeText, activeName, cache, len(pool.Members), pool.RefreshInterval, pool.LastSwitchAt, reason)
+			// 池被禁用时成员完全不参与运行，必须在卡片上直接说明，
+			// 否则只会看到"保存成功"和内核里过期的旧节点。
+			runHint := ""
+			if !pool.Enabled {
+				runHint = "\n[red]未参与运行：此池已禁用，成员不会生成 provider[-]"
+			}
+			skippedText := ""
+			if len(availability.Skipped) > 0 {
+				parts := make([]string, 0, len(availability.Skipped))
+				for _, s := range availability.Skipped {
+					name := s.Name
+					if name == "" {
+						name = s.ID
+					}
+					parts = append(parts, name+"("+s.Reason+")")
+				}
+				skippedText = "\n[gray]已跳过: " + strings.Join(parts, "、") + "[-]"
+			}
+			content := fmt.Sprintf("[yellow::b]%s[-:-:-]  %s\n运行模式: %s    活动源: %s    本地缓存: %s\n成员: %d    刷新间隔: %d 秒\n最近切换: %s\n原因: %s%s%s",
+				pool.Name, state, modeText, activeName, cache, len(pool.Members), pool.RefreshInterval, pool.LastSwitchAt, reason, runHint, skippedText)
 			info := tview.NewTextView().SetDynamicColors(true).SetWrap(true).SetText(content)
 			p := pool
 			edit := tview.NewButton("编辑").SetSelectedFunc(func() { showEditor(&p) })
@@ -391,8 +423,9 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 			deleteBtn := tview.NewButton("删除").SetSelectedFunc(func() {
 				go func() {
 					c, e := mihomotui.GetIPCClient()
+					var report *mihomotui.SubscriptionPoolUpdateResponse
 					if e == nil {
-						e = c.IPCDeleteSubscriptionPool(p.ID)
+						report, e = c.IPCDeleteSubscriptionPool(p.ID)
 					}
 					app.QueueUpdateDraw(func() {
 						if e != nil {
@@ -402,8 +435,11 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 						load(func(err error) {
 							if err != nil {
 								showModal("同步失败", err.Error())
-							} else {
-								render()
+								return
+							}
+							render()
+							if report != nil && !report.Applied {
+								showModal("已删除，但未生效", applyFailureText(report))
 							}
 						})
 					})

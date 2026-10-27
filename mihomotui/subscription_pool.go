@@ -81,6 +81,81 @@ func hasSubscriptionCache(sub SubscriptionMeta) bool {
 	return err == nil && !info.IsDir() && info.Size() > 0
 }
 
+// SubscriptionCacheAvailable 报告订阅是否真的能参与生成 provider。
+// UI 与配置生成必须共用同一判定，否则会出现"界面显示 N/N 可用，
+// 但生成的 provider 数量更少"的静默不一致。
+func SubscriptionCacheAvailable(sub SubscriptionMeta) bool {
+	return !sub.Disabled && hasSubscriptionCache(sub)
+}
+
+// SkippedPoolMember 描述一个被排除在运行配置之外的池成员。
+type SkippedPoolMember struct {
+	ID     string `json:"id"`
+	Name   string `json:"name,omitempty"`
+	Reason string `json:"reason"`
+}
+
+// PoolMemberAvailability 汇总池成员的实际可用情况。
+type PoolMemberAvailability struct {
+	Available int                 `json:"available"`
+	Total     int                 `json:"total"`
+	Skipped   []SkippedPoolMember `json:"skipped,omitempty"`
+}
+
+// poolAvailability 计算池中真正参与运行的成员数，并记录每个被跳过成员的原因。
+func (c *Config) poolAvailability(pool SubscriptionPool) PoolMemberAvailability {
+	avail := PoolMemberAvailability{Total: len(pool.Members)}
+	for _, memberID := range pool.Members {
+		i := c.FindSubscriptionByID(memberID)
+		if i < 0 {
+			avail.Skipped = append(avail.Skipped, SkippedPoolMember{ID: memberID, Reason: "订阅已不存在"})
+			continue
+		}
+		sub := c.Subscriptions[i]
+		switch {
+		case sub.Disabled:
+			avail.Skipped = append(avail.Skipped, SkippedPoolMember{ID: memberID, Name: sub.Name, Reason: "订阅已被禁用"})
+		case !hasSubscriptionCache(sub):
+			avail.Skipped = append(avail.Skipped, SkippedPoolMember{ID: memberID, Name: sub.Name, Reason: "缺少本地缓存"})
+		default:
+			avail.Available++
+		}
+	}
+	return avail
+}
+
+// PoolAvailability 供 UI 复用后端的成员可用性判定，避免前后端对"可用"的定义不一致
+// （出现过界面显示 N/N 可用、实际只生成更少 provider 的情况）。
+func (c *Config) PoolAvailability(pool SubscriptionPool) PoolMemberAvailability {
+	return c.poolAvailability(pool)
+}
+
+// subscriptionAffectsRuntime 报告该订阅的变化是否需要重新生成运行配置。
+// 合并池的任意成员都参与运行；主备池只有活动成员参与运行；
+// 未归入任何已启用订阅池的订阅不影响运行（在订阅页面显示为“未分配”）。
+func (c *Config) subscriptionAffectsRuntime(id string) bool {
+	if id == "" {
+		return false
+	}
+	for _, pool := range c.SubscriptionPools {
+		if !pool.Enabled {
+			continue
+		}
+		if normalizedSubscriptionPoolMode(pool.Mode) == SubscriptionPoolModeMerge {
+			for _, memberID := range pool.Members {
+				if memberID == id {
+					return true
+				}
+			}
+			continue
+		}
+		if pool.ActiveMemberID == id {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *Config) FindPoolByIdentifier(id string) int {
 	for i := range c.SubscriptionPools {
 		if c.SubscriptionPools[i].ID == id || c.SubscriptionPools[i].Name == id {
@@ -89,20 +164,11 @@ func (c *Config) FindPoolByIdentifier(id string) int {
 	}
 	return -1
 }
-func (c *Config) defaultPool() *SubscriptionPool {
-	if len(c.SubscriptionPools) == 0 {
-		return nil
-	}
-	return &c.SubscriptionPools[0]
-}
-func (c *Config) ensureDefaultPool() *SubscriptionPool {
-	if p := c.defaultPool(); p != nil {
-		return p
-	}
-	p := SubscriptionPool{ID: newSubscriptionID(), Name: "默认订阅池", Enabled: true, RefreshInterval: defaultSubscriptionRefreshInterval}
-	c.SubscriptionPools = append(c.SubscriptionPools, p)
-	return &c.SubscriptionPools[len(c.SubscriptionPools)-1]
-}
+
+// 说明：历史上存在 defaultPool/ensureDefaultPool，会把新导入的订阅静默塞进
+// SubscriptionPools[0]（可能是一个已被禁用、甚至被搬空的池），导致导入看似成功
+// 但运行配置只包含第一个订阅。订阅池归属现在完全由用户显式决定，
+// 未归入任何池的订阅在订阅页面显示为"未分配"，因此不再提供默认池入口。
 func (c *Config) activeSubscriptionForPool(pool SubscriptionPool) (SubscriptionMeta, bool) {
 	i := c.FindSubscriptionByID(pool.ActiveMemberID)
 	if i < 0 || c.Subscriptions[i].Disabled {
@@ -112,11 +178,18 @@ func (c *Config) activeSubscriptionForPool(pool SubscriptionPool) (SubscriptionM
 }
 func (c *Config) activePoolSubscriptions() ([]SubscriptionMeta, error) {
 	result := make([]SubscriptionMeta, 0, len(c.SubscriptionPools))
+	enabledPools := 0
 	for _, pool := range c.SubscriptionPools {
 		if !pool.Enabled {
 			continue
 		}
+		enabledPools++
 		if normalizedSubscriptionPoolMode(pool.Mode) == SubscriptionPoolModeMerge {
+			availability := c.poolAvailability(pool)
+			for _, skipped := range availability.Skipped {
+				// 静默减员会让"合并池"看起来只剩第一个订阅，必须留下可追溯的原因。
+				Warnf("合并订阅池 %q 跳过成员: name=%s reason=%s", pool.Name, skipped.Name, skipped.Reason)
+			}
 			available := 0
 			for _, memberID := range pool.Members {
 				i := c.FindSubscriptionByID(memberID)
@@ -124,14 +197,14 @@ func (c *Config) activePoolSubscriptions() ([]SubscriptionMeta, error) {
 					continue
 				}
 				sub := c.Subscriptions[i]
-				if sub.Disabled || !hasSubscriptionCache(sub) {
+				if !SubscriptionCacheAvailable(sub) {
 					continue
 				}
 				result = append(result, sub)
 				available++
 			}
 			if available == 0 {
-				return nil, fmt.Errorf("合并订阅池 %q 没有可用本地缓存", pool.Name)
+				return nil, fmt.Errorf("合并订阅池 %q 没有可用本地缓存（成员 %d 个，全部被跳过）", pool.Name, len(pool.Members))
 			}
 			continue
 		}
@@ -140,13 +213,22 @@ func (c *Config) activePoolSubscriptions() ([]SubscriptionMeta, error) {
 		if !ok {
 			return nil, fmt.Errorf("订阅池 %q 没有有效活动源", pool.Name)
 		}
-		if !hasSubscriptionCache(sub) {
+		if !SubscriptionCacheAvailable(sub) {
 			return nil, fmt.Errorf("订阅池 %q 的活动源 %q 没有可用本地缓存", pool.Name, sub.Name)
 		}
 		result = append(result, sub)
 	}
 	if len(result) == 0 {
-		return nil, fmt.Errorf("没有已启用且可用的订阅池")
+		// 区分"没有池"、"池全被禁用"和"池启用了但没有可用缓存"，
+		// 让 UI 能直接告诉用户该去做什么，而不是笼统报错。
+		switch {
+		case len(c.SubscriptionPools) == 0:
+			return nil, fmt.Errorf("没有订阅池：请先在订阅池页面创建订阅池并加入订阅源")
+		case enabledPools == 0:
+			return nil, fmt.Errorf("没有已启用的订阅池：%d 个订阅池全部处于禁用状态，请在订阅池页面启用", len(c.SubscriptionPools))
+		default:
+			return nil, fmt.Errorf("已启用的订阅池没有可用的订阅缓存，请先刷新订阅")
+		}
 	}
 	return result, nil
 }

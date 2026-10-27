@@ -52,6 +52,7 @@ func (d *Daemon) reconcileLoop() {
 				apply = d.runReconcile
 			}
 			report := apply(req)
+			d.recordApplyReport(req.reason, report)
 			if report.Applied {
 				Infof("配置应用完成: reason=%s", req.reason)
 			} else {

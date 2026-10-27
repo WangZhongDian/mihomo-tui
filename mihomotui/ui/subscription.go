@@ -368,12 +368,15 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 					quotaText += "  到期: " + sub.ExpireAt
 				}
 			}
-			// 计算该订阅已分配到哪些订阅池。
+			// 计算该订阅已分配到哪些订阅池；未归入任何池即"未分配"，不参与运行。
 			poolNames := []string{}
 			for _, pool := range cfg.SubscriptionPools {
 				for _, memberID := range pool.Members {
 					if memberID == sub.ID {
 						label := pool.Name
+						if pool.Mode == mihomotui.SubscriptionPoolModeMerge {
+							label += " [gray](合并)[-]"
+						}
 						if !pool.Enabled {
 							label += " [gray](池已禁用)[-]"
 						}
@@ -382,7 +385,7 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 					}
 				}
 			}
-			poolText := "[gray]未分配[-]"
+			poolText := "[yellow]未分配（未参与运行，请在订阅池页面加入）[-]"
 			if len(poolNames) > 0 {
 				poolText = strings.Join(poolNames, ", ")
 			}
@@ -502,7 +505,11 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 				inputField.SetText("")
 				currentPage = totalPages() - 1
 				refreshCards()
-				showModal("导入成功", fmt.Sprintf("成功导入订阅: %s", subscriptions[len(subscriptions)-1].Name))
+				if len(subscriptions) > 0 {
+					showModal("导入成功", fmt.Sprintf("成功导入订阅: %s\n\n该订阅当前为「未分配」，请到【订阅池】页面把它加入订阅池后才会参与运行。", subscriptions[len(subscriptions)-1].Name))
+				} else {
+					showModal("导入成功", "订阅已导入，请在【订阅池】页面加入订阅池后生效。")
+				}
 			})
 		}()
 	})
@@ -579,7 +586,7 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 						reloadSubs()
 						refreshCards()
 						close()
-						showModal("导入成功", "订阅内容已缓存并由本程序主动管理")
+						showModal("导入成功", "订阅内容已缓存。该订阅当前为「未分配」，请到【订阅池】页面加入订阅池后才会参与运行。")
 					})
 				}()
 			})

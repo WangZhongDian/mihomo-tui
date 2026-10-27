@@ -26,6 +26,29 @@ type Daemon struct {
 	reconcileCh                 chan reconcileRequest
 	reconcileApply              reconcileApplyFunc // 测试注入点；为 nil 时使用 runReconcile
 	subscriptionSchedulerCancel context.CancelFunc
+
+	// 最近一次运行时应用结果（内存态，不落盘），用于状态接口与 UI 提示
+	// "配置已保存但未生效"。零值时 Applied 为 false 且 Reason 为空，
+	// 表示本次进程尚未执行过任何应用任务。
+	lastApplyReport ApplyReport
+	lastApplyReason string
+	lastApplyAt     string
+}
+
+// recordApplyReport 记录最近一次运行时应用结果。
+func (d *Daemon) recordApplyReport(reason string, report ApplyReport) {
+	d.mu.Lock()
+	d.lastApplyReport = report
+	d.lastApplyReason = reason
+	d.lastApplyAt = time.Now().Format(TimeFormatShort)
+	d.mu.Unlock()
+}
+
+// LastApplyReport 返回最近一次运行时应用结果、触发原因和时间。
+func (d *Daemon) LastApplyReport() (ApplyReport, string, string) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.lastApplyReport, d.lastApplyReason, d.lastApplyAt
 }
 
 // RunDaemon 启动 IPC 后台服务
