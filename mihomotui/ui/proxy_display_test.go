@@ -114,7 +114,7 @@ func TestProxyCardKeepsDelayVisibleWhenNarrow(t *testing.T) {
 		text  string
 	}{
 		{88, "88ms"},
-		{-1, "超时"},
+		{-1, "timeout"},
 		{-3, "未测试"},
 		{-2, "测试中"},
 		{1234, "1234ms"},
