@@ -30,6 +30,8 @@ type Subscription struct {
 	MetadataStatus     string
 	FailureCount       int
 	CacheFile          string
+	CacheAvailable     bool
+	Disabled           bool
 	SourceType         mihomotui.SubscriptionSource
 	UseLocalProxy      bool
 	UserAgent          string
@@ -57,10 +59,14 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 				TotalGB:       meta.TotalGB,
 				UploadBytes:   meta.UploadBytes, DownloadBytes: meta.DownloadBytes, TotalBytes: meta.TotalBytes,
 				ExpireAt: meta.ExpireAt, MetadataAvailable: meta.MetadataAvailable, MetadataStatus: meta.MetadataStatus,
-				FailureCount:  meta.FailureCount,
-				CacheFile:     meta.CacheFile,
-				SourceType:    meta.SourceType,
-				UseLocalProxy: meta.UseLocalProxy, UserAgent: meta.UserAgent, FetchProxyStrategy: meta.FetchProxyStrategy,
+				FailureCount: meta.FailureCount,
+				CacheFile:    meta.CacheFile,
+				// 缓存是否可用与首页、订阅池页共用同一判定，避免同一条订阅
+				// 在不同页面显示不同结论。
+				CacheAvailable: mihomotui.SubscriptionCacheAvailable(meta),
+				Disabled:       meta.Disabled,
+				SourceType:     meta.SourceType,
+				UseLocalProxy:  meta.UseLocalProxy, UserAgent: meta.UserAgent, FetchProxyStrategy: meta.FetchProxyStrategy,
 			})
 		}
 	}
@@ -348,8 +354,11 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 
 			// 信息文本（3行）
 			statusText := "[green]已由本地缓存接管[-]"
-			if sub.CacheFile == "" {
+			switch {
+			case sub.CacheFile == "":
 				statusText = "[yellow]等待首次缓存[-]"
+			case !sub.CacheAvailable && !sub.Disabled:
+				statusText = "[yellow]缺少本地缓存[-]"
 			}
 			if sub.FailureCount > 0 {
 				statusText = fmt.Sprintf("[yellow]连续失败: %d[-]", sub.FailureCount)

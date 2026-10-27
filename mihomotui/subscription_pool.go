@@ -3,7 +3,9 @@ package mihomotui
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,7 +80,20 @@ func hasSubscriptionCache(sub SubscriptionMeta) bool {
 		return false
 	}
 	info, err := os.Stat(sub.CacheFile)
-	return err == nil && !info.IsDir() && info.Size() > 0
+	if err == nil {
+		return !info.IsDir() && info.Size() > 0
+	}
+	// CacheFile 是绝对路径，在"root 守护进程 + 普通用户 TUI"的分体模式下，
+	// 它指向 root 私有的配置目录（0700），TUI 进程 stat 会拿到 EACCES。
+	// 此时"读不到"只说明本进程无权判定，并不等于缓存不存在；
+	// 真正读该文件生成 provider 的是守护进程。若这里按"不可用"处理，
+	// 首页和订阅池页面会把本来正常的订阅报成"不可用"（0/N 参与合并），
+	// 而内核里节点其实都还在。因此无权访问时按可用处理，把"缺失"的判断
+	// 留给能读到文件的进程（例如守护进程的启动前校验与运行时应用结果）。
+	if errors.Is(err, fs.ErrPermission) {
+		return true
+	}
+	return false
 }
 
 // SubscriptionCacheAvailable 报告订阅是否真的能参与生成 provider。
