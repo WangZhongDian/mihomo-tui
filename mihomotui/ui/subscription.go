@@ -373,7 +373,7 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 			for _, pool := range cfg.SubscriptionPools {
 				for _, memberID := range pool.Members {
 					if memberID == sub.ID {
-						label := pool.Name
+						label := SanitizeDisplayText(pool.Name)
 						if pool.Mode == mihomotui.SubscriptionPoolModeMerge {
 							label += " [gray](合并)[-]"
 						}
@@ -393,7 +393,8 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 				"[blue::b] %s[-:-:-]    %s\n"+
 					" 来源: %s    更新: %s    %s\n"+
 					" [%s]%s[-]  %s    订阅池: %s",
-				sub.Name, quotaText, mihomotui.RedactURL(sub.URL), sub.UpdatedAt, percentText, mihomotui.ColorInfo, bar, statusText, poolText,
+				// 订阅名由用户输入，可能含国旗 emoji 或方括号标签语法。
+				SanitizeDisplayText(sub.Name), quotaText, mihomotui.RedactURL(sub.URL), sub.UpdatedAt, percentText, mihomotui.ColorInfo, bar, statusText, poolText,
 			)
 			info := tview.NewTextView().SetText(infoText).SetDynamicColors(true)
 

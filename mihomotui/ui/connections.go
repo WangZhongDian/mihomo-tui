@@ -136,12 +136,13 @@ func NewConnectionsPage(app *tview.Application) tview.Primitive {
 				activeMarker = "[" + mihomotui.ColorMuted + "]○[-] "
 			}
 
-			table.SetCell(row, 0, tview.NewTableCell(" "+activeMarker+c.Host))
+			table.SetCell(row, 0, tview.NewTableCell(" "+activeMarker+SanitizeDisplayText(c.Host)))
 			table.SetCell(row, 1, tview.NewTableCell(" "+formatSize(c.Download)))
 			table.SetCell(row, 2, tview.NewTableCell(" "+formatSize(c.Upload)))
 			table.SetCell(row, 3, tview.NewTableCell(" "+formatSpeed(c.DownSpeed)))
 			table.SetCell(row, 4, tview.NewTableCell(" "+formatSpeed(c.UpSpeed)))
-			table.SetCell(row, 5, tview.NewTableCell(" "+c.Chain))
+			// 链路里包含节点名，可能含国旗 emoji，统一归一化避免宽度错位。
+			table.SetCell(row, 5, tview.NewTableCell(" "+SanitizeDisplayText(c.Chain)))
 			row++
 		}
 

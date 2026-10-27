@@ -48,7 +48,7 @@ func buildSubCardText() string {
 			// 却不知道成员仍在池里但没有参与运行。
 			state = "[red]■[-]"
 		}
-		lines = append(lines, fmt.Sprintf("%s [::b]%s[-]  (%s)", state, pool.Name, mode))
+		lines = append(lines, fmt.Sprintf("%s [::b]%s[-]  (%s)", state, SanitizeDisplayText(pool.Name), mode))
 		availability := cfg.PoolAvailability(pool)
 		if pool.Mode == mihomotui.SubscriptionPoolModeMerge {
 			lines = append(lines, fmt.Sprintf("  参与合并 %d / %d 个订阅源", availability.Available, availability.Total))
@@ -75,7 +75,7 @@ func buildSubCardText() string {
 			if pool.Mode != mihomotui.SubscriptionPoolModeMerge && id == pool.ActiveMemberID {
 				current = " [::b](当前)[-]"
 			}
-			line := fmt.Sprintf("  • %s%s · %s", sub.Name, current, status)
+			line := fmt.Sprintf("  • %s%s · %s", SanitizeDisplayText(sub.Name), current, status)
 			if remaining := subscriptionRemainingText(sub); remaining != "" {
 				line += " · 剩余 " + remaining
 			}
@@ -178,13 +178,18 @@ func NewDashboard(app *tview.Application) (Page, func()) {
 					}
 					delayColor := DelayColor(activeNode.Delay)
 					delayText := DelayText(activeNode.Delay)
+					// 节点/策略组名来自订阅，可能含国旗 emoji：按显示宽度归一化，
+					// 否则部分终端会把国旗渲染成 4 格并与后面的文字重叠。
+					nodeName := SanitizeDisplayText(activeNode.Name)
+					nodeType := SanitizeDisplayText(activeNode.Type)
+					groupLabel := SanitizeDisplayText(group.Name)
 					text = fmt.Sprintf(
 						" [%s::b]●[-:-:-] %s\n"+
 							"    %s\n\n"+
 							" 代理组: [::u]%s[-:-:-]\n\n"+
 							" 节点: [%s]●[-] %s [%s]%s[-]",
-						mihomotui.ColorOK, activeNode.Name, activeNode.Type, group.Name,
-						mihomotui.ColorOK, activeNode.Name, delayColor, delayText,
+						mihomotui.ColorOK, nodeName, nodeType, groupLabel,
+						mihomotui.ColorOK, nodeName, delayColor, delayText,
 					)
 				} else {
 					text = fmt.Sprintf(
@@ -216,8 +221,9 @@ func NewDashboard(app *tview.Application) (Page, func()) {
 							"    %s\n\n"+
 							" 代理组: [::u]%s[-:-:-]\n\n"+
 							" 模式: 自动切换（%s）",
-						mihomotui.ColorOK, group.Name, group.Type, group.Name,
-						group.Type,
+						mihomotui.ColorOK,
+						SanitizeDisplayText(group.Name), SanitizeDisplayText(group.Type),
+						SanitizeDisplayText(group.Name), SanitizeDisplayText(group.Type),
 					)
 				} else {
 					var activeNode *mihomotui.ProxyNode
@@ -239,13 +245,18 @@ func NewDashboard(app *tview.Application) (Page, func()) {
 					delayColor := DelayColor(activeNode.Delay)
 					delayText := DelayText(activeNode.Delay)
 
+					// 节点/策略组名来自订阅，可能含国旗 emoji：按显示宽度归一化，
+					// 否则部分终端会把国旗渲染成 4 格并与后面的文字重叠。
+					nodeName := SanitizeDisplayText(activeNode.Name)
+					nodeType := SanitizeDisplayText(activeNode.Type)
+					groupLabel := SanitizeDisplayText(group.Name)
 					text = fmt.Sprintf(
 						" [%s::b]●[-:-:-] %s\n"+
 							"    %s\n\n"+
 							" 代理组: [::u]%s[-:-:-]\n\n"+
 							" 节点: [%s]●[-] %s [%s]%s[-]",
-						mihomotui.ColorOK, activeNode.Name, activeNode.Type, group.Name,
-						mihomotui.ColorOK, activeNode.Name, delayColor, delayText,
+						mihomotui.ColorOK, nodeName, nodeType, groupLabel,
+						mihomotui.ColorOK, nodeName, delayColor, delayText,
 					)
 				}
 			}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+	"github.com/rivo/uniseg"
 	"mihomotui/mihomotui"
 )
 
@@ -23,6 +24,9 @@ func NewProxyPage(app *tview.Application) tview.Primitive {
 	cardsPerRow := 2
 	cardHeight := 4
 	cardMinWidth := 24
+	// 最近一次绘制时的可用宽度，用于按卡片实际宽度截断过长的节点名，
+	// 避免名称换行后把类型/延迟那一行挤出卡片。
+	pageWidth := 0
 
 	// 与 mihomo 配置和 provider 健康检查使用同一测试地址。此前此页面
 	// 硬编码 gstatic，在部分网络和新版内核下会导致测速失败而代理仍可用。
@@ -102,6 +106,13 @@ func NewProxyPage(app *tview.Application) tview.Primitive {
 
 		pageInfo.SetText(fmt.Sprintf(" %d / %d ", currentPage+1, tp))
 
+		// 卡片内可用于节点名的宽度：左右边框 2 列 + 右侧"测"按钮 4 列
+		// + 首行" ● "前缀 3 列 + 右侧留白 1 列。宽度未知时传 0 表示不截断。
+		nameWidth := 0
+		if cardsPerRow > 0 && pageWidth > 0 {
+			nameWidth = max(pageWidth/cardsPerRow-10, 8)
+		}
+
 		var rowFlex *tview.Flex
 		count := 0
 		for i := start; i < end; i++ {
@@ -114,7 +125,7 @@ func NewProxyPage(app *tview.Application) tview.Primitive {
 
 			idx := i
 			node := nodes[idx]
-			card := createProxyCard(node, idx == selectedNode, func() {
+			card := createProxyCard(node, idx == selectedNode, nameWidth, func() {
 				go func(gName, nName string, nIdx int) {
 					api, err := mihomotui.GetMihomoAPI()
 					if err != nil {
@@ -396,6 +407,7 @@ func NewProxyPage(app *tview.Application) tview.Primitive {
 			newMaxPerPage != maxPerPage || newCardsPerRow != cardsPerRow {
 			lastWidth = width
 			lastHeight = height
+			pageWidth = width
 			maxPerPage = newMaxPerPage
 			cardsPerRow = newCardsPerRow
 			refreshNodes()
@@ -421,7 +433,8 @@ func NewProxyPage(app *tview.Application) tview.Primitive {
 						if len(proxyGroups) > 0 {
 							opts := make([]string, len(proxyGroups))
 							for i, g := range proxyGroups {
-								opts[i] = g.Name
+								// 策略组名同样可能含国旗/方括号，按显示宽度归一化。
+								opts[i] = SanitizeDisplayText(g.Name)
 							}
 							groupDropdown.SetOptions(opts, func(text string, index int) {
 								selectedGroup = index
@@ -475,31 +488,61 @@ func sortNodes(nodes []mihomotui.ProxyNode) {
 	})
 }
 
-// createProxyCard 创建代理节点卡片
-func createProxyCard(node mihomotui.ProxyNode, selected bool, onClick func(), onTest func()) tview.Primitive {
+// cardMetaLine 生成卡片第二行（类型 + 延迟）。
+// nameWidth 是节点名可用宽度，卡片内容宽度约为 nameWidth+4；
+// 卡片较窄时先收紧间距、再截断类型，始终保证延迟完整可见——
+// 延迟是本页面的核心信息，不能被类型挤掉。
+func cardMetaLine(typeName, delayText string, nameWidth int) string {
+	const indent = "    "
+	if nameWidth <= 0 {
+		// 宽度未知（首帧）：保持原布局，由终端裁剪。
+		return indent + typeName + "    " + delayText
+	}
+	contentWidth := nameWidth + 4
+	if w := len(indent) + uniseg.StringWidth(typeName) + len(indent) + uniseg.StringWidth(delayText); w <= contentWidth {
+		return indent + typeName + indent + delayText
+	}
+	budget := contentWidth - len(indent) - 1 - uniseg.StringWidth(delayText)
+	if budget < 4 {
+		budget = 4
+	}
+	return indent + TruncateDisplay(typeName, budget) + " " + delayText
+}
+
+// createProxyCard 创建代理节点卡片。
+// nameWidth 是节点名可用的显示宽度（0 表示按终端裁剪不预处理），
+// 超过该宽度的名称会被截断，保证类型/延迟行始终可见。
+func createProxyCard(node mihomotui.ProxyNode, selected bool, nameWidth int, onClick func(), onTest func()) tview.Primitive {
 	// 延迟颜色与文本
 	delayColor := DelayColor(node.Delay)
 	delayText := DelayText(node.Delay)
+
+	// 节点名来自订阅，可能含国旗 emoji、方括号或超长中文：
+	// 必须归一化显示宽度并转义 tview 标签，否则会出现起始字符重叠或文字被吞。
+	displayName := DisplayName(node.Name, nameWidth)
+	displayType := SanitizeDisplayText(node.Type)
+	metaLine := cardMetaLine(displayType, delayText, nameWidth)
 
 	// 信息文本
 	var text string
 	if selected {
 		text = fmt.Sprintf(
-			" [white::b]● %s[-:-:-]\n"+
-				"    %s    [white]%s[-]",
-			node.Name, node.Type, delayText,
+			" [white::b]● %s[-:-:-]\n%s",
+			displayName, metaLine,
 		)
 	} else {
 		text = fmt.Sprintf(
-			" [%s]●[-] [::b]%s[-:-:-]\n"+
-				"    %s    [%s]%s[-]",
-			delayColor, node.Name, node.Type, delayColor, delayText,
+			" [%s]●[-] [::b]%s[-:-:-]\n[%s]%s[-]",
+			delayColor, displayName, delayColor, metaLine,
 		)
 	}
 
 	info := tview.NewTextView().
 		SetText(text).
-		SetDynamicColors(true)
+		SetDynamicColors(true).
+		// 关闭自动换行：长名称按卡片宽度裁剪（已提前截断），
+		// 不再把第二行类型/延迟挤到卡片外。
+		SetWrap(false)
 
 	// 单独测试按钮
 	testBtn := tview.NewButton("测")

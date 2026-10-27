@@ -118,10 +118,11 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 			memberList.SetBorder(true).SetTitle("成员顺序（上方优先）")
 			var rebuildMembers func()
 			memberName := func(id string) string {
+				// 仅用于展示：名称可能含国旗 emoji 或方括号标签语法。
 				if i := cfg.FindSubscriptionByID(id); i >= 0 {
-					return cfg.Subscriptions[i].Name
+					return SanitizeDisplayText(cfg.Subscriptions[i].Name)
 				}
-				return id
+				return SanitizeDisplayText(id)
 			}
 			rebuildMembers = func() {
 				memberList.Clear()
@@ -148,7 +149,7 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 				if alreadyInPool {
 					continue
 				}
-				options = append(options, sub.Name)
+				options = append(options, SanitizeDisplayText(sub.Name))
 				optionIDs = append(optionIDs, sub.ID)
 			}
 			selector.SetOptions(options, nil)
@@ -174,7 +175,7 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 						}
 					}
 					if !inPool {
-						newOptions = append(newOptions, sub.Name)
+						newOptions = append(newOptions, SanitizeDisplayText(sub.Name))
 						newOptionIDs = append(newOptionIDs, sub.ID)
 					}
 				}
@@ -228,7 +229,7 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 							}
 						}
 						if !inPool {
-							newOptions = append(newOptions, sub.Name)
+							newOptions = append(newOptions, SanitizeDisplayText(sub.Name))
 							newOptionIDs = append(newOptionIDs, sub.ID)
 						}
 					}
@@ -352,7 +353,7 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 			state := "[yellow]已禁用[-]"
 			if si := cfg.FindSubscriptionByID(pool.ActiveMemberID); si >= 0 {
 				sub := cfg.Subscriptions[si]
-				activeName = sub.Name
+				activeName = SanitizeDisplayText(sub.Name)
 				if mihomotui.SubscriptionCacheAvailable(sub) {
 					cache = "可用"
 				} else {
@@ -386,16 +387,16 @@ func NewSubscriptionPoolPage(app *tview.Application) tview.Primitive {
 			if len(availability.Skipped) > 0 {
 				parts := make([]string, 0, len(availability.Skipped))
 				for _, s := range availability.Skipped {
-					name := s.Name
+					name := SanitizeDisplayText(s.Name)
 					if name == "" {
-						name = s.ID
+						name = SanitizeDisplayText(s.ID)
 					}
 					parts = append(parts, name+"("+s.Reason+")")
 				}
 				skippedText = "\n[gray]已跳过: " + strings.Join(parts, "、") + "[-]"
 			}
 			content := fmt.Sprintf("[yellow::b]%s[-:-:-]  %s\n运行模式: %s    活动源: %s    本地缓存: %s\n成员: %d    刷新间隔: %d 秒\n最近切换: %s\n原因: %s%s%s",
-				pool.Name, state, modeText, activeName, cache, len(pool.Members), pool.RefreshInterval, pool.LastSwitchAt, reason, runHint, skippedText)
+				SanitizeDisplayText(pool.Name), state, modeText, activeName, cache, len(pool.Members), pool.RefreshInterval, pool.LastSwitchAt, reason, runHint, skippedText)
 			info := tview.NewTextView().SetDynamicColors(true).SetWrap(true).SetText(content)
 			p := pool
 			edit := tview.NewButton("编辑").SetSelectedFunc(func() { showEditor(&p) })
