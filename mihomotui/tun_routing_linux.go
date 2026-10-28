@@ -1233,7 +1233,18 @@ func RestoreTUNRouting() error {
 	return nil
 }
 
-// CleanupEnvironment 停止/卸载时统一清理系统代理环境变量和 TUN 路由规则。
+// CleanupTUNRoutingOnly 仅清理 TUN 路由规则，不触碰用户 shell 里的代理环境变量。
+// systemd 的 ExecStop 走这条路径：`systemctl stop/restart` 属于常规运维动作，
+// 不应该把用户的 ~/.bashrc 代理注入一起抹掉（历史 bug：每次升级都清空系统代理）。
+func CleanupTUNRoutingOnly() {
+	if err := RestoreTUNRouting(); err != nil {
+		Warnf("清理 TUN 路由规则失败: %v", err)
+	} else {
+		Infof("[CleanupTUNRoutingOnly] TUN 路由规则已清理")
+	}
+}
+
+// CleanupEnvironment 卸载/显式 `mihomo-tui cleanup` 时统一清理系统代理环境变量和 TUN 路由规则。
 func CleanupEnvironment() {
 	Infof("[CleanupEnvironment] 开始清理环境...")
 	if err := CleanupSystemProxyEnv(); err != nil {

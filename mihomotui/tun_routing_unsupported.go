@@ -23,6 +23,9 @@ func DescribeTUNRouting() ([]string, error) {
 	return nil, fmt.Errorf("当前平台不支持 TUN 路由诊断")
 }
 
+// CleanupTUNRoutingOnly 非 Linux 平台无 TUN 路由可清理。
+func CleanupTUNRoutingOnly() {}
+
 // CleanupEnvironment 非 Linux 平台仅清理当前用户的系统代理环境变量。
 func CleanupEnvironment() {
 	if err := CleanupSystemProxyEnv(); err != nil {

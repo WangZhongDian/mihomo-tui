@@ -26,7 +26,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "                              安装为 systemd 服务（需 root）；可按安装前内核状态恢复启动")
 		fmt.Fprintln(os.Stderr, "  mihomo-tui uninstall           卸载 systemd 服务（需 root）")
 		fmt.Fprintln(os.Stderr, "  mihomo-tui grant_operator 用户  授予普通用户订阅管理权限（需 root）")
-		fmt.Fprintln(os.Stderr, "  mihomo-tui cleanup             清理系统代理和 TUN 环境（需 root）")
+		fmt.Fprintln(os.Stderr, "  mihomo-tui cleanup [--tun-only]     清理系统代理和 TUN 环境（需 root；--tun-only 仅清 TUN 规则）")
 		fmt.Fprintln(os.Stderr, "  mihomo-tui tun_diagnose        输出 TUN 路由 dry-run 计划（不修改系统）")
 		fmt.Fprintln(os.Stderr, "  mihomo-tui tun_debug [--apply] 输出 TUN 预检；--apply 时重建修复并输出日志（需 root）")
 		fmt.Fprintln(os.Stderr, "  mihomo-tui version             显示版本信息")
@@ -73,7 +73,6 @@ func main() {
 		}
 		cmd.RunGrantOperator(args[1])
 	case "cleanup":
-		cmd.RunCleanup()
 	case "tun_diagnose":
 		cmd.RunTUNDiagnose()
 	case "tun_debug":

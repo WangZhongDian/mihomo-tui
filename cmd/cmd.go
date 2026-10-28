@@ -127,10 +127,20 @@ func RunTUNDebug(dir string, args []string) {
 	}
 }
 
-// RunCleanup 清理系统代理环境变量和 TUN 路由规则。
-func RunCleanup() {
+// RunCleanup 清理环境。默认同时清理系统代理环境变量和 TUN 路由规则；
+// --tun-only 只清理 TUN 路由规则（systemd ExecStop 使用，不动用户 shell 配置）。
+func RunCleanup(args []string) {
+	fs := flag.NewFlagSet("cleanup", flag.ContinueOnError)
+	tunOnly := fs.Bool("tun-only", false, "只清理 TUN 路由规则，保留用户 shell 中的系统代理环境变量")
+	_ = fs.Parse(args)
+
 	if os.Geteuid() == 0 && mihomotui.GetCustomConfigDir() == "" {
 		mihomotui.SetCustomConfigDir("/var/lib/mihomo-tui")
+	}
+	if *tunOnly {
+		mihomotui.CleanupTUNRoutingOnly()
+		fmt.Println("✅ TUN 路由规则清理完成（系统代理环境变量保留）")
+		return
 	}
 	mihomotui.CleanupEnvironment()
 	fmt.Println("✅ 环境清理完成")

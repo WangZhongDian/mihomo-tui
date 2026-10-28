@@ -90,15 +90,16 @@ func InstallServiceWithKernelHint(kernelHint string) error {
 		fmt.Println(">>> 安装前 mihomo 内核处于运行状态，完成后将自动恢复启动")
 	}
 
-	// 3. 若服务正在运行，先停止并清理环境
+	// 3. 若服务正在运行，先停止内核与 TUN 路由（保留用户 shell 中的系统代理注入）
 	if output, _ := exec.Command("systemctl", "is-active", "mihomo-tui").CombinedOutput(); strings.TrimSpace(string(output)) == "active" {
 		mihomotui.Infof("检测到服务正在运行，先停止...")
 		if output, err := exec.Command("systemctl", "stop", "mihomo-tui").CombinedOutput(); err != nil {
 			return fmt.Errorf("停止现有服务失败: %w, 输出: %s", err, string(output))
 		}
 		mihomotui.Infof("已停止现有服务")
-		// 停止后手动清理环境（ExecStop 可能未触发或已执行）
-		mihomotui.CleanupEnvironment()
+		// 兜底清理 TUN 规则（ExecStop 可能未触发）。
+		// 注意：这里刻意不清理系统代理环境变量——升级会把用户的系统代理抹掉。
+		mihomotui.CleanupTUNRoutingOnly()
 	}
 
 	// 4. 确保 root daemon 的 IPC 授权组存在：mihomo-tui 仅允许读取状态，
@@ -312,7 +313,8 @@ func UninstallService() error {
 		}
 		mihomotui.Infof("已停止服务")
 	}
-	// 手动清理环境（systemd stop 已触发 ExecStop，再做一次兜底）
+	// 手动清理环境（systemd stop 已触发 ExecStop 的 TUN 清理，这里补做一次兜底）。
+	// 卸载是显式移除产品的动作，因此连同用户 shell 中的系统代理注入一起清理。
 	mihomotui.CleanupEnvironment()
 
 	// 3. disable 服务
