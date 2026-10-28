@@ -111,6 +111,17 @@ type inputBinding struct {
 	current func(c *mihomotui.Config) string
 }
 
+// isProxyPortField 判断设置项是否为系统代理会用到的端口字段。
+// 这些端口变化后必须重建 shell 注入块，否则代理会指向旧端口。
+func isProxyPortField(label string) bool {
+	switch label {
+	case "混合端口", "HTTP 端口", "SOCKS5 端口":
+		return true
+	default:
+		return false
+	}
+}
+
 // NewSettingsPage 创建设置页面
 func NewSettingsPage(app *tview.Application) tview.Primitive {
 	activeTab := 0 // 0=系统设置, 1=mihomo设置, 2=关于
@@ -193,6 +204,12 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 			// 本地缓存已在提交成功后同步，以其为准刷新日志配置
 			g := mihomotui.GlobalConfig()
 			_ = mihomotui.InitLogger(g.LogDir, g.LogLevel)
+			// 代理端口变化后，已注入的 shell 块仍指向旧端口，必须按新端口重建。
+			if isProxyPortField(fieldName) {
+				if _, rerr := mihomotui.ReconcileSystemProxyEnv(); rerr != nil {
+					mihomotui.Warnf("端口变更后重建系统代理环境变量失败: %v", rerr)
+				}
+			}
 			mihomotui.Infof("设置 %s 已保存", fieldName)
 		}()
 	}
@@ -325,25 +342,20 @@ func NewSettingsPage(app *tview.Application) tview.Primitive {
 			})
 	}).
 		AddCheckbox("系统代理", mihomotui.GetSystemProxyPreference(), func(checked bool) {
-			if reverting {
+			if reverting || !pageReady {
 				return
 			}
 			// 系统代理是当前 TUI 用户的本地偏好：写本用户环境变量 + 本地偏好文件，
-			// 不写入 daemon 全局配置。
-			if err := cfg.SetSystemProxyEnv(checked); err != nil {
-				mihomotui.Warnf("系统代理环境变量设置失败: %v", err)
-				// 注入失败：回滚偏好与显示，避免显示状态与实际不符
-				if perr := mihomotui.SetSystemProxyPreference(!checked); perr != nil {
-					mihomotui.Warnf("系统代理偏好回滚失败: %v", perr)
+			// 不写入 daemon 全局配置。端口自检、会话注入与结果提示统一由
+			// toggleSystemProxy 处理；这里只负责失败时把勾选状态回滚。
+			toggleSystemProxy(app, settingsPages, checked, func() {
+				if mihomotui.GetSystemProxyPreference() == checked {
+					return
 				}
 				if cb := findCheckbox(systemForm, "系统代理"); cb != nil {
 					silentSet(func() { cb.SetChecked(!checked) })
 				}
-				return
-			}
-			if err := mihomotui.SetSystemProxyPreference(checked); err != nil {
-				mihomotui.Warnf("系统代理偏好保存失败: %v", err)
-			}
+			})
 		}).
 		AddCheckbox("虚拟网卡模式", cfg.System.TUN, func(checked bool) {
 			doSave("虚拟网卡模式",

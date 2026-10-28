@@ -32,6 +32,20 @@ func Run(standalone bool) error {
 		os.Exit(1)
 	}
 
+	// 系统代理对账：偏好为开启时补齐 shell 注入块（历史上被 `systemctl stop`
+	// 的 ExecStop 误删过），偏好为关闭时清掉残留块。内容一致时不会写文件。
+	// 放在 TUI 启动阶段执行，是因为注入块属于当前用户，只有客户端能确定归属。
+	// 端口未监听时 ReconcileSystemProxyEnvIfUsable 会拒绝注入，避免写死端口。
+	if changed, skipped, err := mihomotui.ReconcileSystemProxyEnvIfUsable(); err != nil {
+		mihomotui.Warnf("系统代理环境变量对账失败: %v", err)
+	} else if changed {
+		if skipped {
+			mihomotui.Infof("已按偏好清理系统代理环境变量注入")
+		} else {
+			mihomotui.Infof("已按偏好重建系统代理环境变量注入")
+		}
+	}
+
 	app := tview.NewApplication().EnableMouse(true).EnablePaste(true)
 
 	// 先创建所有页面，用于后续键盘导航判断

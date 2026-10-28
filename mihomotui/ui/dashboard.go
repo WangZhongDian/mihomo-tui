@@ -116,6 +116,14 @@ func subscriptionQuotaText(sub mihomotui.SubscriptionMeta) string {
 func NewDashboard(app *tview.Application) (Page, func()) {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// 根级 Pages 容器，用于覆盖全屏弹窗（卡片回调需要它，因此先创建）
+	rootPages := tview.NewPages()
+	rootPages.Focus(func(p tview.Primitive) { app.SetFocus(p) })
+
+	showModal := func(title, message string) {
+		ShowAlertModal(app, rootPages, title, message)
+	}
+
 	// 订阅信息卡片
 	subCard := tview.NewTextView().
 		SetText(buildSubCardText()).
@@ -268,11 +276,10 @@ func NewDashboard(app *tview.Application) (Page, func()) {
 	}
 
 	// 网络设置卡片（可交互）
-	netCard, refreshNetCard := newNetSettingsCard(app)
+	netCard, refreshNetCard := newNetSettingsCard(app, rootPages)
 
 	// 代理模式卡片（可交互）
 	modeCard, refreshModeCard := newProxyModeCard(app)
-
 	// 流量统计卡片
 	statsCard := tview.NewTextView().
 		SetText(
@@ -285,28 +292,11 @@ func NewDashboard(app *tview.Application) (Page, func()) {
 		SetTitle(" 流量统计 ").
 		SetTitleAlign(tview.AlignLeft)
 
-	// 根级 Pages 容器，用于覆盖全屏弹窗
-	rootPages := tview.NewPages()
-	rootPages.Focus(func(p tview.Primitive) { app.SetFocus(p) })
+	// 根级 Pages 容器与弹窗（已在页面开头创建，供各卡片共用）
 
-	showModal := func(title, message string) {
-		lastFocus := app.GetFocus()
-		modal := tview.NewModal().
-			SetText(fmt.Sprintf("%s\n\n%s", title, message)).
-			AddButtons([]string{"确认"}).
-			SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-				rootPages.HidePage("modal")
-				rootPages.RemovePage("modal")
-				if lastFocus != nil {
-					app.SetFocus(lastFocus)
-				}
-			})
-		rootPages.AddPage("modal", modal, true, true)
-		app.SetFocus(modal)
-	}
-
-	// 内核状态卡片（使用根级 showModal）
-	kernelCard := newKernelStatusCard(app, showModal, ctx)
+	// 内核状态卡片（使用根级 showModal）。停止内核会自动关闭系统代理，
+	// 因此把网络设置卡片的刷新回调传进去，保证显示与实际一致。
+	kernelCard := newKernelStatusCard(app, showModal, ctx, refreshNetCard)
 
 	// 使用 Grid 构建卡片网格布局
 	grid := tview.NewGrid().
@@ -408,7 +398,8 @@ func NewDashboard(app *tview.Application) (Page, func()) {
 }
 
 // newKernelStatusCard 创建内核状态卡片（显示运行状态 + 外部资源 + 启停按钮）
-func newKernelStatusCard(app *tview.Application, showModal func(string, string), ctx context.Context) tview.Primitive {
+// onKernelStopped 在停止内核后调用（此时系统代理已被自动关闭），用于刷新相关卡片显示。
+func newKernelStatusCard(app *tview.Application, showModal func(string, string), ctx context.Context, onKernelStopped func()) tview.Primitive {
 	statusText := tview.NewTextView().
 		SetDynamicColors(true).
 		SetTextAlign(tview.AlignCenter)
@@ -522,6 +513,21 @@ func newKernelStatusCard(app *tview.Application, showModal func(string, string),
 					})
 					return
 				}
+				// 内核停掉后代理端口不再监听：同步关闭系统代理，
+				// 否则新开终端会拿到指向死端口的变量。
+				disabled, derr := mihomotui.DisableSystemProxyOnKernelStop()
+				if derr != nil {
+					mihomotui.Warnf("停止内核后关闭系统代理失败: %v", derr)
+				}
+				if onKernelStopped != nil {
+					app.QueueUpdateDraw(onKernelStopped)
+				}
+				if disabled {
+					app.QueueUpdateDraw(func() {
+						showModal("内核已停止", "已自动关闭系统代理，避免新终端指向已停止的代理端口。\n\n"+
+							mihomotui.SystemProxyClearHint())
+					})
+				}
 			} else {
 				if err := client.IPCStartMihomo(); err != nil {
 					app.QueueUpdateDraw(func() {
@@ -608,7 +614,8 @@ func newKernelStatusCard(app *tview.Application, showModal func(string, string),
 }
 
 // newNetSettingsCard 创建可交互的网络设置卡片（状态实时同步）
-func newNetSettingsCard(app *tview.Application) (tview.Primitive, func()) {
+// pages 由仪表盘传入，用于在卡片内弹出确认/结果弹窗。
+func newNetSettingsCard(app *tview.Application, pages *tview.Pages) (tview.Primitive, func()) {
 	activeTab := 0
 	daemonIsRoot := false
 
@@ -693,17 +700,7 @@ func newNetSettingsCard(app *tview.Application) (tview.Primitive, func()) {
 			// 系统代理是当前 TUI 用户的本地偏好：写本用户环境变量 + 本地偏好文件，
 			// 不写入 daemon 全局配置，避免多用户共享 daemon 时互相覆盖。
 			enable := !mihomotui.GetSystemProxyPreference()
-			cfg := mihomotui.GlobalConfig()
-			if err := cfg.SetSystemProxyEnv(enable); err != nil {
-				mihomotui.Warnf("系统代理环境变量设置失败: %v", err)
-				// 注入失败：不更新偏好，显示保持原状态，避免与实际不符
-				update()
-				return
-			}
-			if err := mihomotui.SetSystemProxyPreference(enable); err != nil {
-				mihomotui.Warnf("系统代理偏好保存失败: %v", err)
-			}
-			update()
+			toggleSystemProxy(app, pages, enable, update)
 			return
 		}
 		current := mihomotui.GlobalConfig()
