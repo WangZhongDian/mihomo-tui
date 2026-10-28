@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"gopkg.in/yaml.v3"
@@ -27,9 +28,27 @@ var (
 	clientPrefsMu     sync.RWMutex
 )
 
-// preferencesFilePath 返回当前用户的客户端偏好文件路径。
+// preferencesFilePath 返回客户端偏好文件路径。
+//
+// 注意 `sudo mihomo-tui` 场景：此时 GetConfigDir() 指向 /root/.config/mihomo-tui，
+// 但系统代理注入的目标是发起 sudo 的用户主目录。若偏好也落到 /root，
+// 下次以普通用户启动就读不到它，会被判定为"关闭"并清掉注入块。
+// 因此 root + SUDO_USER 时把偏好放在目标用户的配置目录里。
 func preferencesFilePath() string {
-	return filepath.Join(GetConfigDir(), ClientPreferencesFileName)
+	return filepath.Join(clientPreferencesDir(), ClientPreferencesFileName)
+}
+
+// clientPreferencesDir 返回客户端偏好所在目录。
+// 普通用户即 GetConfigDir()；root 代 sudo 用户操作时改为该用户自己的配置目录。
+func clientPreferencesDir() string {
+	if os.Geteuid() == 0 {
+		if sudoUser := strings.TrimSpace(os.Getenv("SUDO_USER")); sudoUser != "" && sudoUser != "root" {
+			if home := homeDirOfUser(sudoUser); home != "" {
+				return filepath.Join(home, ".config", ConfigDirName)
+			}
+		}
+	}
+	return GetConfigDir()
 }
 
 // readClientPreferences 从磁盘读取客户端偏好；文件不存在时返回 nil（由调用方迁移）。
@@ -74,6 +93,10 @@ func ensureClientPreferencesLoaded() {
 // 调用方需持有 clientPrefsMu。
 func saveClientPreferencesLocked() error {
 	path := preferencesFilePath()
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("创建偏好目录失败: %w", err)
+	}
 	data, err := yaml.Marshal(&clientPrefs)
 	if err != nil {
 		return fmt.Errorf("序列化客户端偏好失败: %w", err)
@@ -89,6 +112,8 @@ func saveClientPreferencesLocked() error {
 	if err := os.Chmod(path, 0600); err != nil {
 		return fmt.Errorf("收紧客户端偏好权限失败: %w", err)
 	}
+	// root 代写普通用户的偏好文件后，把所有者改回去。
+	chownToSystemProxyTarget(path)
 	return nil
 }
 
