@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -658,10 +657,91 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 	return page
 }
 
+type customRuleType struct {
+	kind        string
+	placeholder string
+	noResolve   bool
+}
+
+var customRuleTypes = []customRuleType{
+	{kind: "DOMAIN", placeholder: "example.com"},
+	{kind: "DOMAIN-SUFFIX", placeholder: "example.com"},
+	{kind: "DOMAIN-KEYWORD", placeholder: "example"},
+	{kind: "DOMAIN-WILDCARD", placeholder: "*.example.com"},
+	{kind: "DOMAIN-REGEX", placeholder: "^example\\.com$"},
+	{kind: "GEOSITE", placeholder: "youtube"},
+	{kind: "IP-CIDR", placeholder: "1.1.1.1/32", noResolve: true},
+	{kind: "IP-CIDR6", placeholder: "2001:db8::/32", noResolve: true},
+	{kind: "GEOIP", placeholder: "CN"},
+	{kind: "SRC-IP-CIDR", placeholder: "192.168.1.0/24"},
+	{kind: "DST-PORT", placeholder: "443"},
+	{kind: "SRC-PORT", placeholder: "7890"},
+	{kind: "NETWORK", placeholder: "tcp 或 udp"},
+	{kind: "PROCESS-NAME", placeholder: "chrome.exe"},
+	{kind: "RULE-SET", placeholder: "规则订阅名称"},
+}
+
+func customRuleTypeLabels() []string {
+	labels := make([]string, len(customRuleTypes))
+	for i, ruleType := range customRuleTypes {
+		labels[i] = ruleType.kind
+	}
+	return labels
+}
+
+// composeCustomRule 将表单中的类型、内容和策略组合为 mihomo 规则。
+// no-resolve 是策略之后的可选参数，只对支持它的类型生效。
+func composeCustomRule(kind, content, policy string, noResolve bool) (string, error) {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return "", fmt.Errorf("请输入规则内容")
+	}
+	if strings.Contains(content, ",") {
+		return "", fmt.Errorf("只需输入规则内容，请勿包含规则类型、策略或逗号")
+	}
+	if strings.Contains(content, "\n") || strings.Contains(content, "\r") {
+		return "", fmt.Errorf("规则内容不能包含换行符")
+	}
+	supported := false
+	for _, ruleType := range customRuleTypes {
+		if ruleType.kind == kind {
+			supported = true
+			noResolve = noResolve && ruleType.noResolve
+			break
+		}
+	}
+	if !supported {
+		return "", fmt.Errorf("不支持的规则类型: %s", kind)
+	}
+	rule := kind + "," + content + "," + policy
+	if noResolve {
+		rule += ",no-resolve"
+	}
+	return rule, nil
+}
+
 // newCustomRulesPage manages custom rules on either side of built-in rules.
 func newCustomRulesPage(app *tview.Application, pages *tview.Pages) tview.Primitive {
-	input := tview.NewInputField().SetPlaceholder("DOMAIN,example.com 或 IP-CIDR,1.1.1.1/32,no-resolve")
-	input.SetBorder(true).SetTitle("规则")
+	input := tview.NewInputField().SetPlaceholder(customRuleTypes[0].placeholder)
+	input.SetBorder(true).SetTitle("内容")
+	ruleType := tview.NewDropDown().SetOptions(customRuleTypeLabels(), nil).SetCurrentOption(0)
+	ruleType.SetBorder(true).SetTitle("类型")
+	noResolve := tview.NewCheckbox().SetLabel("no-resolve")
+	noResolve.SetBorder(true).SetTitle("DNS")
+	noResolveRow := tview.NewFlex().AddItem(noResolve, 0, 0, false)
+	form := tview.NewFlex()
+	updateType := func(index int) {
+		selected := customRuleTypes[index]
+		input.SetPlaceholder(selected.placeholder)
+		noResolve.SetChecked(false)
+		width := 0
+		if selected.noResolve {
+			width = 16
+		}
+		form.ResizeItem(noResolveRow, width, 0)
+		noResolveRow.ResizeItem(noResolve, width, 0)
+	}
+	ruleType.SetSelectedFunc(func(_ string, index int) { updateType(index) })
 	policy := tview.NewDropDown().SetOptions(mihomotui.PolicyList, nil).SetCurrentOption(0)
 	policy.SetBorder(true).SetTitle("策略")
 	position := tview.NewDropDown().SetOptions([]string{"前置", "后置"}, nil).SetCurrentOption(0)
@@ -729,22 +809,12 @@ func newCustomRulesPage(app *tview.Application, pages *tview.Pages) tview.Primit
 		addGroup("后置规则", cfg.PostCustomRules, true)
 	}
 	add.SetSelectedFunc(func() {
-		rule := strings.TrimSpace(input.GetText())
-		if rule == "" {
-			ShowAlertModal(app, pages, "添加失败", "请输入规则内容")
-			return
-		}
-		if strings.HasPrefix(strings.ToUpper(rule), "MATCH,") {
-			ShowAlertModal(app, pages, "添加失败", "自定义规则不能包含 MATCH")
-			return
-		}
-		if !strings.Contains(rule, ",") {
-			ShowAlertModal(app, pages, "添加失败", "规则格式不正确")
-			return
-		}
+		_, kind := ruleType.GetCurrentOption()
 		_, pg := policy.GetCurrentOption()
-		if !slices.Contains(mihomotui.PolicyList, strings.TrimSpace(rule[strings.LastIndex(rule, ",")+1:])) {
-			rule += "," + pg
+		rule, err := composeCustomRule(kind, input.GetText(), pg, noResolve.IsChecked())
+		if err != nil {
+			ShowAlertModal(app, pages, "添加失败", err.Error())
+			return
 		}
 		_, pos := position.GetCurrentOption()
 		commit(func(c *mihomotui.Config) {
@@ -757,7 +827,16 @@ func newCustomRulesPage(app *tview.Application, pages *tview.Pages) tview.Primit
 		input.SetText("")
 	})
 	refresh()
-	return tview.NewFlex().SetDirection(tview.FlexRow).AddItem(tview.NewFlex().AddItem(input, 0, 3, true).AddItem(policy, 14, 0, false).AddItem(position, 12, 0, false).AddItem(add, 8, 0, false), 3, 0, false).AddItem(list, 0, 1, false)
+	form.AddItem(ruleType, 21, 0, true).
+		AddItem(input, 0, 1, false).
+		AddItem(policy, 14, 0, false).
+		AddItem(position, 12, 0, false).
+		AddItem(noResolveRow, 0, 0, false).
+		AddItem(add, 8, 0, false)
+	updateType(0)
+	return tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(form, 3, 0, false).
+		AddItem(list, 0, 1, false)
 }
 
 // newBuiltInRulesPage exposes enabled state, priority and editable built-in settings.
