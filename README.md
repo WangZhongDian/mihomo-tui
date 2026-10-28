@@ -77,14 +77,16 @@ Usage:
   mihomo-tui [options]                           Start the TUI client
   mihomo-tui server [-d <directory>]             Start the background IPC service
   mihomo-tui start                               Start the mihomo kernel (requires IPC; root when daemon runs as root)
-  mihomo-tui stop                                Stop the mihomo kernel (requires IPC; root when daemon runs as root)
+  mihomo-tui stop                                Stop the mihomo kernel and disable system proxy (requires IPC; root when daemon runs as root)
   mihomo-tui restart                             Restart the mihomo kernel (requires IPC; root when daemon runs as root)
   mihomo-tui status                              Show mihomo kernel status (requires IPC; exit 3 when stopped)
   mihomo-tui subscription import <import option> Import a subscription for daemon takeover
   mihomo-tui install_service                     Install the systemd service (root required)
   mihomo-tui uninstall                           Uninstall the systemd service (root required)
   mihomo-tui grant_operator <user>               Grant a regular user IPC management access (root required)
-  mihomo-tui cleanup                             Clean system-proxy and TUN environment (root required)
+  mihomo-tui cleanup [--tun-only]                Clean system-proxy and TUN environment (root required; --tun-only keeps shell proxy env)
+  mihomo-tui doctor                              Diagnose system-proxy injection (read-only)
+  mihomo-tui unsetshell                          Print shell code to clear proxy vars in the current terminal
   mihomo-tui tun_diagnose                        Print a TUN routing dry-run plan; makes no changes
   mihomo-tui tun_debug [--apply]                 Print TUN preflight; rebuild rules only with --apply (root required)
   mihomo-tui version                             Show version information
@@ -170,7 +172,7 @@ mihomo-tui/
 
 ## Build
 
-Requires Go 1.26+:
+Requires Go 1.27+:
 
 ```bash
 go build -ldflags="-s -w" -o mihomo-tui .

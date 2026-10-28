@@ -29,6 +29,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  mihomo-tui cleanup [--tun-only]     清理系统代理和 TUN 环境（需 root；--tun-only 仅清 TUN 规则）")
 		fmt.Fprintln(os.Stderr, "  mihomo-tui tun_diagnose        输出 TUN 路由 dry-run 计划（不修改系统）")
 		fmt.Fprintln(os.Stderr, "  mihomo-tui tun_debug [--apply] 输出 TUN 预检；--apply 时重建修复并输出日志（需 root）")
+		fmt.Fprintln(os.Stderr, "  mihomo-tui doctor              诊断系统代理注入状态（只读，不改配置）")
+		fmt.Fprintln(os.Stderr, "  mihomo-tui unsetshell          输出清除当前终端代理变量的 shell 代码")
+		fmt.Fprintln(os.Stderr, "                                用法: eval \"$(mihomo-tui unsetshell)\"")
 		fmt.Fprintln(os.Stderr, "  mihomo-tui version             显示版本信息")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "选项:")
@@ -73,10 +76,15 @@ func main() {
 		}
 		cmd.RunGrantOperator(args[1])
 	case "cleanup":
+		cmd.RunCleanup(args[1:])
 	case "tun_diagnose":
 		cmd.RunTUNDiagnose()
 	case "tun_debug":
 		cmd.RunTUNDebug(*dir, args[1:])
+	case "doctor":
+		cmd.RunDoctor()
+	case "unsetshell":
+		cmd.RunUnsetShellEnv()
 	case "version":
 		cmd.RunVersion()
 	case "help":

@@ -77,14 +77,16 @@ mihomo-tui — mihomo 终端 UI 与守护进程管理工具
   mihomo-tui [选项]                              启动 TUI 客户端
   mihomo-tui server [-d <目录>]                  启动后台 IPC 服务
   mihomo-tui start                               启动 mihomo 内核（需 IPC；root 守护进程下需 root）
-  mihomo-tui stop                                停止 mihomo 内核（需 IPC；root 守护进程下需 root）
+  mihomo-tui stop                                停止 mihomo 内核并自动关闭系统代理（需 IPC；root 守护进程下需 root）
   mihomo-tui restart                             重启 mihomo 内核（需 IPC；root 守护进程下需 root）
   mihomo-tui status                              查询 mihomo 内核状态（需 IPC；未运行时退出码 3）
   mihomo-tui subscription import <导入选项>      导入并由 daemon 主动接管订阅
   mihomo-tui install_service                     安装为 systemd 服务（需 root）
   mihomo-tui uninstall                           卸载 systemd 服务（需 root）
   mihomo-tui grant_operator <用户名>             授予普通用户 IPC 管理权限（需 root）
-  mihomo-tui cleanup                             清理系统代理和 TUN 环境（需 root）
+  mihomo-tui cleanup [--tun-only]                清理系统代理和 TUN 环境（需 root；--tun-only 仅清 TUN 规则）
+  mihomo-tui doctor                              诊断系统代理注入状态（只读，不改配置）
+  mihomo-tui unsetshell                          输出清除当前终端代理变量的 shell 代码
   mihomo-tui tun_diagnose                        输出 TUN 路由 dry-run 计划（不修改系统）
   mihomo-tui tun_debug [--apply]                 输出 TUN 预检；仅 --apply 时重建修复（需 root）
   mihomo-tui version                             显示版本信息
@@ -170,7 +172,7 @@ mihomo-tui/
 
 ## 构建
 
-需要 Go 1.26+：
+需要 Go 1.27+：
 
 ```bash
 go build -ldflags="-s -w" -o mihomo-tui .

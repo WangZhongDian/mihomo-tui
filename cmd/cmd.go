@@ -75,6 +75,73 @@ func RunUninstallService() {
 	}
 }
 
+// RunDoctor 输出系统代理注入的逐项诊断，帮助定位"开了但没生效"。
+// 只读：不修改任何文件或环境变量。
+func RunDoctor() {
+	diag := mihomotui.DiagnoseSystemProxy()
+	fmt.Println("mihomo-tui 系统代理诊断（只读，不修改任何配置）")
+	fmt.Println()
+	fmt.Printf("配置目录      : %s\n", diag.ConfigDir)
+	fmt.Printf("当前用户      : uid=%d  home=%s\n", os.Geteuid(), mihomotui.SystemProxyTargetHomeForDisplay())
+	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
+		fmt.Printf("SUDO_USER     : %s（注入目标为发起 sudo 的用户）\n", sudoUser)
+	}
+	fmt.Printf("偏好开关      : %s\n", map[bool]string{true: "已开启", false: "已关闭"}[diag.PreferenceEnabled])
+	fmt.Printf("代理端口      : http=127.0.0.1:%d socks=127.0.0.1:%d\n", diag.HTTPPort, diag.SocksPort)
+	fmt.Printf("端口监听      : %s\n", map[bool]string{true: "是", false: "否 ← 内核未启动时走代理会失败"}[diag.PortListening])
+	fmt.Println()
+	fmt.Println("shell 配置文件:")
+	for _, f := range diag.ShellFiles {
+		state := "未注入"
+		switch {
+		case !f.Exists:
+			state = "文件不存在"
+		case f.HasBlk && f.HasHTTP:
+			state = "已注入（端口匹配）"
+		case f.HasBlk:
+			state = "已注入（端口不匹配！）"
+		}
+		marker := " "
+		if f.LoginEntry {
+			marker = "*"
+		}
+		fmt.Printf("  %s %-40s %s\n", marker, f.Path, state)
+	}
+	fmt.Println("  * = 登录 shell 的实际入口（bash 按 .bash_profile → .bash_login → .profile 取第一个）")
+	if diag.UnitExecStop != "" {
+		fmt.Printf("\nsystemd unit ExecStop: %s\n", diag.UnitExecStop)
+	}
+	fmt.Println()
+	fmt.Println("当前进程环境变量:")
+	for _, v := range diag.SessionVars {
+		if v.Set {
+			fmt.Printf("  %-12s = %s\n", v.Name, v.Value)
+		} else {
+			fmt.Printf("  %-12s = (未设置)\n", v.Name)
+		}
+	}
+	if len(diag.Notes) > 0 {
+		fmt.Println()
+		fmt.Println("诊断结论:")
+		for _, note := range diag.Notes {
+			fmt.Println("  ! " + note)
+		}
+	}
+}
+
+// RunUnsetShellEnv 输出一段 shell 代码，用于清除当前终端里残留的代理环境变量。
+//
+// 为什么需要它：进程无法修改其他已运行 shell 的环境变量（Unix 限制），
+// 而注入块被删除后 `source ~/.bashrc` 也不会 unset 已有变量。
+// 这里的做法是把 unset 语句打印出来，由用户的 shell 自己 eval 执行。
+//
+// 用法: eval "$(mihomo-tui unsetshell)"
+func RunUnsetShellEnv() {
+	fmt.Println("# 用法: eval \"$(mihomo-tui unsetshell)\"")
+	fmt.Println("unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy")
+	fmt.Println("# no_proxy / NO_PROXY 保留：本机回环不走代理，清掉反而可能让本地服务被代理劫持")
+}
+
 // RunVersion 输出版本信息
 func RunVersion() {
 	fmt.Printf("mihomo-tui %s\n", mihomotui.Version)
@@ -242,12 +309,20 @@ func RunMihomoStart() {
 		os.Exit(1)
 	}
 	fmt.Println("✅ 内核已启动")
+	// 内核起来后端口已监听，按偏好对账：偏好为开启时补齐注入块。
+	// 端口尚未就绪时 ReconcileSystemProxyEnvIfUsable 会跳过，避免注入死端口。
+	if _, skipped, rerr := mihomotui.ReconcileSystemProxyEnvIfUsable(); rerr != nil {
+		mihomotui.Warnf("启动后对账系统代理环境变量失败: %v", rerr)
+	} else if skipped {
+		fmt.Println("⚠️  内核已启动但代理端口尚未监听，暂未注入系统代理；稍后可重新开启")
+	}
 	if status, err := client.IPCGetMihomoStatus(); err == nil {
 		printMihomoStatus(status)
 	}
 }
 
 // RunMihomoStop 通过 IPC 停止 mihomo 内核。
+// 停内核后代理端口不再监听，因此同步关闭系统代理，避免新开终端拿到指向死端口的变量。
 func RunMihomoStop() {
 	client := ipcClientOrExit()
 	if err := client.IPCStopMihomo(); err != nil {
@@ -258,6 +333,16 @@ func RunMihomoStop() {
 		os.Exit(1)
 	}
 	fmt.Println("✅ 内核已停止")
+
+	// 系统代理是本用户的本地偏好，必须在客户端（而非 root daemon）侧关闭。
+	disabled, derr := mihomotui.DisableSystemProxyOnKernelStop()
+	if derr != nil {
+		fmt.Fprintf(os.Stderr, "⚠️  自动关闭系统代理失败: %v\n", derr)
+		fmt.Fprintln(os.Stderr, "   请手动关闭，或执行 mihomo-tui cleanup")
+	} else if disabled {
+		fmt.Println("✅ 已自动关闭系统代理（避免新终端指向已停止的代理端口）")
+		fmt.Println(mihomotui.SystemProxyClearHint())
+	}
 }
 
 // RunMihomoRestart 通过 IPC 重启 mihomo 内核；若当前未运行则直接启动。
@@ -271,6 +356,11 @@ func RunMihomoRestart() {
 		os.Exit(1)
 	}
 	fmt.Println("✅ 内核已重启")
+	// 内核重启后端口重新监听，按偏好对账一次：若此前因停内核被关闭则保持关闭，
+	// 若仍开启则确保注入块端口与当前配置一致。端口未就绪时自动跳过。
+	if _, _, rerr := mihomotui.ReconcileSystemProxyEnvIfUsable(); rerr != nil {
+		mihomotui.Warnf("重启后对账系统代理环境变量失败: %v", rerr)
+	}
 	if status, err := client.IPCGetMihomoStatus(); err == nil {
 		printMihomoStatus(status)
 	}
