@@ -1,14 +1,16 @@
 package ui
 
 import (
-	"os"
 	"testing"
 
 	"mihomotui/mihomotui/i18n"
 )
 
-func TestMain(m *testing.M) {
-	// Preserve the language assumed by the pre-i18n rendering tests.
-	i18n.SetLanguage(i18n.SimplifiedChinese)
-	os.Exit(m.Run())
+// useTestLanguage isolates UI tests from the process-wide localizer and the
+// locale of the machine running the suite. Do not run such tests in parallel.
+func useTestLanguage(t *testing.T, language string) {
+	t.Helper()
+	previous := i18n.Language()
+	i18n.SetLanguage(language)
+	t.Cleanup(func() { i18n.SetLanguage(previous) })
 }

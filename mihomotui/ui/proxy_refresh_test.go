@@ -310,6 +310,7 @@ func TestClampPageKeepsValidPage(t *testing.T) {
 
 // 冒烟测试：页面能在模拟终端上完整绘制，并实现 Page / Shower 生命周期。
 func TestProxyPageDrawsAndImplementsLifecycle(t *testing.T) {
+	useTestLanguage(t, "zh-CN")
 	app := tview.NewApplication()
 	page := NewProxyPage(app)
 

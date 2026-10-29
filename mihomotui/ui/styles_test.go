@@ -60,6 +60,7 @@ func TestDelayColorDistinctPerBand(t *testing.T) {
 
 // 超时显示为 timeout；其余状态与数值文案保持不变。
 func TestDelayText(t *testing.T) {
+	useTestLanguage(t, "zh-CN")
 	cases := []struct {
 		delay int
 		want  string

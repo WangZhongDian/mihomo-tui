@@ -109,6 +109,7 @@ func TestProxyCardWithoutKnownWidth(t *testing.T) {
 
 // 卡片较窄时必须保住延迟信息：类型可以被截断，延迟不能被裁剪或挤到卡片外。
 func TestProxyCardKeepsDelayVisibleWhenNarrow(t *testing.T) {
+	useTestLanguage(t, "zh-CN")
 	delays := []struct {
 		delay int
 		text  string

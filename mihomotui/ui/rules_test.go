@@ -51,6 +51,7 @@ func TestComposeCustomRule(t *testing.T) {
 }
 
 func TestComposeCustomRuleRejectsInvalidInput(t *testing.T) {
+	useTestLanguage(t, "zh-CN")
 	tests := []struct {
 		name    string
 		kind    string
