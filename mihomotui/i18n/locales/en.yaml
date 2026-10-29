@@ -1,0 +1,507 @@
+common.confirm: Confirm
+common.cancel: Cancel
+common.close: Close
+common.delete: Delete
+common.save: Save
+common.refresh: Refresh
+common.enabled: Enabled
+common.disabled: Disabled
+common.yes: "Yes"
+common.no: "No"
+nav.home: Dashboard
+nav.proxy: Proxies
+nav.subscription: Subscriptions
+nav.pools: Subscription pools
+nav.connections: Connections
+nav.rules: Rules
+nav.logs: Logs
+nav.resources: Resources
+nav.settings: Settings
+nav.menu: Menu
+startup.connect_error: "Unable to connect to the IPC service: {{.Error}}"
+startup.sync_error: "Unable to synchronize configuration: {{.Error}}"
+startup.select_language: Select your language
+startup.language_prompt: "请选择界面语言 / Choose your language"
+startup.language_hint: "This choice is saved for the current user. You can change it later in Settings."
+startup.save_language_failed: "Unable to save the language preference: {{.Error}}"
+settings.title: Settings
+settings.system: System settings
+settings.mihomo: mihomo settings
+settings.about: About
+settings.autostart: Launch on startup
+settings.system_proxy: System proxy
+settings.tun: TUN mode
+settings.language: Language
+settings.language.follow_system: Follow system
+settings.language.restart: Restart the TUI to apply the new language.
+settings.language.save_failed: Failed to save language
+settings.log_level: Application log level
+settings.log_dir: Log directory
+settings.work_dir: Working directory
+settings.http_port: HTTP port
+settings.socks_port: SOCKS5 port
+settings.mixed_port: Mixed port
+settings.redir_port: Redir port
+settings.tproxy_port: TProxy port
+settings.allow_lan: Allow LAN
+settings.ipv6: IPv6
+settings.unified_delay: Unified delay
+settings.auto_redirect: Automatic transparent proxy
+settings.mihomo_log_level: Log level
+settings.default_policy: Default proxy policy
+settings.test_url: Delay test URL
+settings.shutdown: Shut down background service and exit
+settings.about.description: A terminal UI configuration tool for the mihomo kernel
+settings.about.version: "Version: {{.Version}}"
+settings.about.go_version: "Go version: {{.Version}}"
+settings.about.repository: "Repository: https://github.com/WangZhongDian/mihomo-tui"
+settings.save_failed: Save failed
+settings.invalid_input: Invalid input
+settings.invalid_number: Please enter a valid number
+settings.log_dir_required: Log directory cannot be empty
+settings.test_url_required: Test URL cannot be empty
+proxy.group: "Proxy group: "
+proxy.test_delay: Test latency
+proxy.stop_test: Stop test
+proxy.test: Test
+proxy.empty: No nodes available
+proxy.delay.untested: Untested
+proxy.delay.testing: Testing
+proxy.delay.timeout: Timeout
+connections.title: Connections
+logs.title: Logs
+resources.title: Resources
+subscription.title: Subscriptions
+pools.title: Subscription pools
+rules.title: Rules
+
+# dashboard
+"dashboard.pool.none_running": |-
+  No running subscription pools
+
+  Create or migrate subscriptions on the Subscription pools page
+"dashboard.pool.none_enabled": |-
+  No enabled subscription pools
+
+  Enable a subscription pool on the Subscription pools page
+"dashboard.pool.title": Running subscription pools
+"dashboard.pool.mode.failover": Failover
+"dashboard.pool.mode.merge": Merge
+"dashboard.pool.merge_availability": "  {{.Available}} / {{.Total}} sources participating in merge"
+"dashboard.pool.active_missing": "  [yellow]Active source is missing[-]"
+"dashboard.pool.disabled_hint": "  [red]This pool is disabled: its members will not generate providers[-]"
+"dashboard.pool.degraded": Degraded
+"dashboard.unknown_reason": Unknown reason
+"dashboard.apply_failed": "[red]⚠ Configuration not applied ({{.Stage}}): {{.Reason}}[-]"
+"dashboard.apply_failed_hint": "[red]   The kernel may still be using the previous configuration. Correct it on the Subscription pools page and save again.[-]"
+"dashboard.subscription.healthy": "[green]Healthy[-]"
+"dashboard.subscription.unavailable": "[red]Unavailable[-]"
+"dashboard.subscription.failure_count": "[red]{{.Count}} consecutive failures[-]"
+"dashboard.subscription.current": " [::b](Current)[-]"
+"dashboard.subscription.remaining": Remaining
+"dashboard.subscription.metadata_invalid": Unable to parse valid subscription metadata
+"dashboard.node.title": Current node
+"dashboard.node.initial": " [gray]○[-:-:-] Kernel not running\n    No node information"
+"dashboard.node.direct": " [green::b]●[-:-:-] Direct mode\n    All traffic connects directly without a proxy"
+"dashboard.node.active": |-
+   [{{.Color}}::b]●[-:-:-] {{.Node}}
+       {{.Type}}
+
+    Proxy group: [::u]{{.Group}}[-:-:-]
+
+    Node: [{{.Color}}]●[-] {{.Node}} [{{.DelayColor}}]{{.Delay}}[-]
+"dashboard.node.global_empty": " [green::b]●[-:-:-] Global mode\n    No nodes available"
+"dashboard.node.automatic": |-
+   [{{.Color}}::b]●[-:-:-] {{.Group}}
+       {{.Type}}
+
+    Proxy group: [::u]{{.Group}}[-:-:-]
+
+    Mode: Automatic switching ({{.Type}})
+"dashboard.traffic.title": Traffic statistics
+"dashboard.traffic.initial": " Upload: [{{.Color}}]0.00[-] B/s\n Download: [{{.Color}}]0.00[-] B/s\n Total: [{{.Color}}]0.0[-] MB"
+"dashboard.traffic.live": " Upload: [{{.Color}}]{{printf \"%.2f\" .Up}}[-] KB/s\n Download: [{{.Color}}]{{printf \"%.2f\" .Down}}[-] KB/s\n Total: [{{.Color}}]{{printf \"%.2f\" .Total}}[-] MB"
+"dashboard.connection_failed": Connection failed
+"dashboard.status.running": Running
+"dashboard.status.stopped": Stopped
+"dashboard.kernel.title": Kernel
+"dashboard.kernel.start": Start kernel
+"dashboard.kernel.stop": Stop kernel
+"dashboard.kernel.start_failed": Start failed
+"dashboard.kernel.stop_failed": Stop failed
+"dashboard.kernel.stopped_title": Kernel stopped
+"dashboard.kernel.proxy_auto_disabled": System proxy was disabled automatically to prevent new terminals from using a stopped proxy port.
+"dashboard.kernel.embedded": Embedded service
+"dashboard.kernel.standalone": Standalone service
+"dashboard.kernel.installed": "[{{.Color}}]●[-] Kernel installed: v{{.Version}}"
+"dashboard.kernel.not_installed": Kernel not installed
+"dashboard.kernel.running": "[{{.Color}}::b]●[-:-:-] Running  {{.Mode}}\n PID: {{.PID}}\n{{.Binary}}"
+"dashboard.kernel.stopped": "[{{.Color}}]○[-:-:-] Stopped  {{.Mode}}\n Kernel not running\n{{.Binary}}"
+"dashboard.resources.title": External resources
+"dashboard.resources.download": Download external resources
+"dashboard.resources.update": Update external resources
+"dashboard.resources.downloading": Downloading...
+"dashboard.resources.not_downloaded": Not downloaded
+"dashboard.resources.download_failed": Download failed
+"dashboard.resources.download_succeeded": Download succeeded
+"dashboard.resources.updated": External resources updated
+"dashboard.resources.manual_help": You can download and place the external resources manually, then click \"Scan local\" under \"Resources → External resources\".
+"dashboard.network.title": Network settings
+"dashboard.network.system_proxy": System proxy
+"dashboard.network.tun": TUN mode
+"dashboard.network.enable": Enable
+"dashboard.network.disable": Disable
+"dashboard.network.proxy_enabled": "[black:green] Enabled [-:-:-]\n\n System proxy is enabled. Your applications will access the network through the proxy."
+"dashboard.network.proxy_disabled": "[black:gray] Disabled [-:-:-]\n\n System proxy is disabled"
+"dashboard.network.tun_enabled": "[black:green] Enabled [-:-:-]\n\n TUN mode is enabled"
+"dashboard.network.tun_disabled": "[black:gray] Disabled [-:-:-]\n\n TUN mode is disabled"
+"dashboard.network.tun_disabled_root_required_prefix": "[black:gray] Disabled [-:-:-]\n\n TUN mode is disabled\n\n ["
+"dashboard.network.tun_disabled_root_required_suffix": "]⚠ The service is not running as root, so TUN mode is unavailable[-]"
+"dashboard.mode.title": Proxy mode
+"dashboard.mode.rule": Rule
+"dashboard.mode.global": Global
+"dashboard.mode.direct": Direct
+"dashboard.mode.rule_description": "\n Route traffic intelligently using preset rules"
+"dashboard.mode.global_description": "\n Route all traffic through proxy nodes"
+"dashboard.mode.direct_description": "\n Connect all traffic directly without a proxy"
+
+# connections
+"connections.close_all": Close all
+"connections.active": Active
+"connections.closed": Closed
+"connections.filter": Filter
+"connections.stats": " [{{.Color}}]●[-] {{.Count}} active  |  Download: {{.Download}}  |  Upload: {{.Upload}}"
+"connections.header.host": Host
+"connections.header.download": Download
+"connections.header.upload": Upload
+"connections.header.download_speed": Download speed
+"connections.header.upload_speed": Upload speed
+"connections.header.chain": Chain
+
+# logs
+"logs.level": "Level: "
+"logs.level.all": All
+"logs.clear": Clear
+
+# system proxy action
+"system_proxy.action.failed": Failed to configure system proxy
+"system_proxy.action.enabled": System proxy enabled
+"system_proxy.action.disabled": System proxy disabled
+"system_proxy.action.port_not_listening": Proxy port is not listening
+"system_proxy.action.port_not_listening_message": "Local port 127.0.0.1:{{.Port}} is not listening (the mihomo kernel may not be running).\n\nEnabling the system proxy now will cause all proxied applications to fail to connect.\nStart the kernel on the dashboard before enabling the system proxy.\n\nEnable anyway?"
+"system_proxy.action.enable_anyway": Enable anyway
+"system_proxy.action.preference_save_failed": Environment variables were written, but saving the preference failed
+proxy.delay.unknown: Unknown
+common.add: Add
+settings.tun_exclusions: TUN excluded addresses
+settings.manage_addresses: Manage addresses
+settings.fakeip_filter: Fake-IP filter
+settings.manage_domains: Manage domains
+settings.confirm_delete: Confirm deletion
+settings.add_failed: Add failed
+settings.address_required: Please enter an IP, CIDR, or domain
+settings.address_invalid: Please enter a valid address
+settings.address_format: Invalid address (must be an IP, CIDR, or domain)
+settings.domain_required: Please enter a domain
+settings.domain_invalid: Please enter a valid domain
+settings.domain_format: Invalid domain (a domain or *. /+. prefix is required; bare * is not allowed)
+settings.exclude_manager: Excluded addresses (Esc to close)
+settings.new_address: New address
+settings.address_placeholder: "IP / CIDR / domain, e.g. 10.64.0.0/10 or netbird.example.com"
+settings.input: Input
+settings.exclude_hint: One address per entry; non-empty entries are added to TUN route-exclude-address
+settings.exclude_list: Excluded addresses
+settings.exclude_empty: (Empty) Add an IP/CIDR/domain above
+settings.fakeip_manager: Fake-IP filter (Esc to close)
+settings.new_domain: New domain
+settings.domain_placeholder: "Domain / *.domain / +.domain, e.g. +.youmetme.wang"
+settings.fakeip_hint: Matching domains return real IP addresses (no fake-ip); defaults include *.lan and localhost.ptlogin2.qq.com
+settings.fakeip_list: Custom filtered domains
+settings.fakeip_empty: (Empty) Defaults are only *.lan and localhost.ptlogin2.qq.com
+# subscriptions
+subscription.url_placeholder: " Subscription URL (https://...)"
+subscription.import_button: " Import "
+subscription.content_button: " File/Paste "
+subscription.new_button: " New "
+subscription.new_default_name: New subscription
+subscription.refresh_failed: Refresh failed
+subscription.refresh_sync_failed: Refreshed, but synchronization failed
+subscription.refresh_success: Refresh successful
+subscription.refreshed_name: "Refreshed subscription: {{.Name}}"
+subscription.delete_failed: Delete failed
+subscription.editor_title: Edit subscription (Esc to cancel)
+subscription.name_label: "Name: "
+subscription.url_label: "Subscription URL: "
+subscription.fetch_direct: Direct
+subscription.fetch_local_mihomo: Local mihomo proxy
+subscription.fetch_system: System proxy
+subscription.fetch_network_label: "Fetch network: "
+subscription.user_agent_label: "User-Agent: "
+subscription.save_button: " Save "
+subscription.cancel_button: " Cancel "
+subscription.save_failed: Save failed
+subscription.name_required: Subscription name cannot be empty
+subscription.remote_url_invalid: Remote subscription URL must start with http:// or https://
+subscription.save_sync_failed: Saved, but synchronization failed
+subscription.save_success: Save successful
+subscription.save_success_message: Subscription information updated. After changing the remote URL, click Refresh to download the new content.
+subscription.editor_remote_hint: Manually refresh after changing the URL; the old cache will be retained.
+subscription.editor_local_hint: This subscription comes from a local file or pasted content. To protect the cached content, only its name can be changed.
+subscription.cache_active: "[green]Using local cache[-]"
+subscription.cache_pending: "[yellow]Waiting for initial cache[-]"
+subscription.cache_missing: "[yellow]Local cache missing[-]"
+subscription.consecutive_failures: "[yellow]Consecutive failures: {{.Count}}[-]"
+subscription.last_refresh_error: "[red]Refresh failed: {{.Error}}[-]"
+subscription.metadata_unavailable: "[yellow]Unable to parse valid subscription metadata[-]"
+subscription.quota_remaining: "Remaining: %.2fGB"
+subscription.quota_usage: "%.2fGB / %.2fGB"
+subscription.quota_expiry: "  Expires: {{.Date}}"
+subscription.pool_merge_suffix: " [gray](Merged)[-]"
+subscription.pool_disabled_suffix: " [gray](Pool disabled)[-]"
+subscription.pool_unassigned: "[yellow]Unassigned (not running; add it on the Subscription pools page)[-]"
+subscription.card_info: "[blue::b] %s[-:-:-]    %s\n Source: %s    Updated: %s    %s\n [%s]%s[-]  %s    Subscription pools: %s"
+subscription.edit_button: " ✎ Edit "
+subscription.refresh_button: " ↻ Refresh "
+subscription.delete_button: " ✕ Delete "
+subscription.empty: "\nNo subscriptions yet. Import or create one."
+subscription.import_failed: Import failed
+subscription.import_url_invalid: Enter a subscription URL starting with http:// or https://
+subscription.import_success: Import successful
+subscription.import_success_name: "Successfully imported subscription: {{.Name}}\n\nThis subscription is currently unassigned. Add it to a pool on the Subscription pools page before it can run."
+subscription.import_success_generic: Subscription imported. Add it to a pool on the Subscription pools page to activate it.
+subscription.content_import_title: Import from file or pasted content (Esc to cancel)
+subscription.source_label: "Source: "
+subscription.source_pasted: Pasted content
+subscription.source_file: Local file
+subscription.content_placeholder: Paste Clash YAML / Base64 / URI list
+subscription.file_path_label: "File path: "
+subscription.import: Import
+subscription.local_file_required: Select a local subscription file
+subscription.read_file_failed: Failed to read file
+subscription.content_required: Paste subscription content
+subscription.import_sync_failed: Imported, but synchronization failed
+subscription.content_import_success: Subscription content cached. This subscription is currently unassigned. Add it to a pool on the Subscription pools page before it can run.
+subscription.create_failed: Create failed
+subscription.page_status: " Total: %d  Per page: %d "
+pools.runtime_config_generation_failed: Unable to generate a new runtime configuration
+pools.apply_failure: "Configuration saved, but applying it at runtime failed (stage: {{.Stage}}):\n{{.Reason}}\n\nThe kernel is still running the previous successfully generated configuration. Correct the issue and save again, or check whether the nodes have updated on the Proxies page."
+pools.list_title: Subscription pool list
+pools.new_button: " New pool "
+pools.refresh_list_button: " Refresh list "
+pools.edit_unavailable: Unable to edit
+pools.data_not_loaded: Subscription data has not loaded yet
+pools.editor_title: Edit subscription pool (Tab to switch controls, Esc to return to list)
+pools.new_default_name: New subscription pool
+pools.name_label: "Name: "
+pools.mode_label: "Operating mode: "
+pools.mode_failover_option: Priority failover (active source only)
+pools.mode_merge_option: Merge (all cached members)
+pools.refresh_seconds_label: "Refresh seconds: "
+pools.enable_label: Enable this subscription pool
+pools.member_order_title: Member order (highest priority first)
+pools.member_disabled_suffix: " [gray](Disabled)[-]"
+pools.add_member_label: "Add member: "
+pools.select_source: Select a subscription source
+pools.add_member_button: Add
+pools.move_up: Move up
+pools.move_down: Move down
+pools.set_active: Set active
+pools.remove_member: Remove
+pools.toggle_disabled: Disable/Enable
+pools.toggle_failed: Toggle failed
+pools.save_button: " Save "
+pools.cancel_button: " Cancel "
+pools.save_failed: Save failed
+pools.invalid_refresh_interval: Refresh interval must be a positive integer number of seconds
+pools.member_required: An enabled subscription pool needs at least one member
+pools.sync_failed: Synchronization failed
+pools.saved_not_applied: Saved, but not applied
+pools.empty: "\nNo subscription pools yet.\n\nClick New pool above to create a failover set."
+pools.none: None
+pools.state_disabled: "[yellow]Disabled[-]"
+pools.cache_available: Available
+pools.cache_missing: Missing
+pools.state_normal: "[green]Normal[-]"
+pools.consecutive_failures: "[yellow]{{.Count}} consecutive failures[-]"
+pools.state_degraded: "[red]Degraded[-]"
+pools.mode_failover: Priority failover
+pools.mode_merge: Merge
+pools.merge_participation: "Participating in merge %d/%d"
+pools.merge_cache: "%d/%d available"
+pools.disabled_run_hint: "\n[red]Not running: this pool is disabled, and its members will not generate providers[-]"
+pools.skipped: "\n[gray]Skipped: {{.Members}}[-]"
+pools.member_separator: ", "
+pools.card_info: "[yellow::b]%s[-:-:-]  %s\nOperating mode: %s    Active source: %s    Local cache: %s\nMembers: %d    Refresh interval: %d seconds\nLast switch: %s\nReason: %s%s%s"
+pools.edit_button: Edit
+pools.refresh_button: Refresh
+pools.refresh_failed: Refresh failed
+pools.delete_button: Delete
+pools.delete_failed: Delete failed
+pools.deleted_not_applied: Deleted, but not applied
+pools.load_failed: "[red]Load failed: {{.Error}}[-]"
+
+# rules/resources
+rules.tab.list: Rule list
+rules.tab.providers: Rule subscriptions
+rules.tab.custom: Custom rules
+rules.tab.builtin: Built-in rules
+rules.filter.placeholder: Filter
+rules.column.rule: Rule
+rules.column.type: Type
+rules.column.policy: Policy
+rules.empty.no_match: No matching rules
+rules.provider.url_placeholder: Rule subscription URL (https://...)
+rules.provider.import: Import
+rules.provider.refresh_failed: Refresh failed
+rules.provider.refresh_sync_failed: Refreshed, but synchronization failed
+rules.provider.refresh_success: Refresh succeeded
+rules.provider.refreshed: "Refreshed rule subscription: {{.Name}}"
+rules.provider.delete_failed: Delete failed
+rules.provider.last_refresh_success: Last refresh succeeded
+rules.provider.last_refresh_failed: "Refresh failed: {{.Error}}"
+rules.provider.details: |-
+  [blue::b] {{.Name}}[-:-:-]    Behavior: {{.Behavior}}    Format: {{.Format}}    Interval: {{.Interval}}s
+   Source: {{.URL}}    Updated: {{.UpdatedAt}}    Policy: {{.Policy}}  {{.Status}}
+rules.provider.select_policy: |-
+  Select proxy group
+
+  {{.Name}}
+  Current: {{.Current}}
+rules.save_failed: Save failed
+rules.provider.update_success: Updated successfully
+rules.provider.policy_set: "Proxy group set to: {{.Policy}}"
+rules.provider.empty: No rule subscriptions yet. Import one to get started.
+rules.provider.import_failed: Import failed
+rules.provider.url_required: Please enter a rule subscription URL
+rules.provider.url_invalid: Please enter a subscription URL beginning with http:// or https://
+rules.provider.import_success: Import succeeded
+rules.provider.imported: "Successfully imported rule subscription: {{.Name}}"
+rules.provider.pager: "{{.Total}} total, {{.PerPage}} per page"
+rules.custom.placeholder.network: tcp or udp
+rules.custom.placeholder.rule_set: Rule subscription name
+rules.custom.error.content_required: Please enter rule content
+rules.custom.error.content_only: Enter only the rule content, without the rule type, policy, or commas
+rules.custom.error.no_newlines: Rule content cannot contain newlines
+rules.custom.error.unsupported_type: "Unsupported rule type: {{.Type}}"
+rules.custom.content: Content
+rules.custom.position: Position
+rules.custom.position.before: Before
+rules.custom.position.after: After
+rules.custom.add: Add
+rules.custom.confirm_delete: Confirm deletion
+rules.custom.pre_rules: Rules before built-ins
+rules.custom.post_rules: Rules after built-ins
+rules.custom.add_failed: Add failed
+rules.builtin.restore_all: Restore all defaults
+rules.builtin.previous: Previous
+rules.builtin.next: Next
+rules.builtin.enabled: Enabled
+rules.builtin.disabled: Disabled
+rules.builtin.toggle: Enable/Disable
+rules.builtin.edit: Edit
+rules.builtin.restore: Restore
+rules.builtin.empty: No built-in rules. Use "Restore all defaults" to initialize them.
+rules.builtin.pager: "Page {{.Current}} / {{.TotalPages}} · {{.Total}} total"
+rules.builtin.restore_confirm: This will reset all built-in rules while preserving custom rules.
+rules.builtin.editor_title: Edit built-in rule (Esc to cancel)
+rules.builtin.rule: Rule
+rules.builtin.behavior: Behavior
+rules.builtin.format: Format
+rules.builtin.interval: Interval (seconds)
+rules.builtin.invalid_input: Invalid input
+rules.builtin.interval_positive: Update interval must be a positive integer
+resources.kernel.tab: Kernel management
+resources.external.tab: External resources
+resources.kernel.versions_title: mihomo kernel versions (select an action on the right)
+resources.kernel.refresh_versions: Refresh version list
+resources.kernel.update_latest: Update to latest stable
+resources.kernel.scan_manual: Scan for manually placed kernel
+resources.kernel.operation_failed: Kernel operation failed
+resources.kernel.target_version: "Target version: v{{.Version}}"
+resources.kernel.manual_download_url: "Manual download URL: {{.URL}}"
+resources.kernel.manual_help: |-
+  Download the extracted mihomo executable and place it at:
+  {{.Path}}
+
+  Requirements: a regular file, not a symbolic link, and executable. Permissions will be tightened and the actual version verified during scanning.
+resources.scan_local: Scan local file
+resources.kernel.scan_manual_failed: "Failed to scan for manual kernel: {{.Error}}"
+resources.kernel.manual_imported: "Imported manual kernel v{{.Version}}"
+resources.kernel.download_percent: "Downloading {{.Percent}}%"
+resources.kernel.downloaded_size: "Downloaded {{.Size}}"
+resources.kernel.extracting: Extracting
+resources.kernel.downloaded: Downloaded
+resources.operation_failed: "Operation failed: {{.Error}}"
+resources.kernel.switched: "Switched to v{{.Version}}"
+resources.kernel.download_activate: "Downloaded v{{.Version}}. Click Activate to enable it."
+resources.ipc_failed: "IPC connection failed: {{.Error}}"
+resources.kernel.column.version: Version
+resources.kernel.column.published: Published
+resources.kernel.column.status: Status
+resources.kernel.column.action: Action
+resources.kernel.read_failed: "Failed to read versions: {{.Error}}"
+resources.kernel.meta: |-
+  Source: {{.Source}}  Cache checked: {{.CheckedAt}}
+  Manual kernel path: {{.Path}}{{.LastError}}
+resources.kernel.last_refresh_failed: "Last refresh failed: "
+resources.kernel.not_downloaded: Not downloaded
+resources.kernel.download: Download
+resources.kernel.in_use: In use
+resources.kernel.activate: Activate
+resources.kernel.prerelease: Prerelease
+resources.kernel.manual: Manual import
+resources.kernel.root_only: Root only
+resources.kernel.view_only: Current user is read-only; kernel operations require root
+resources.kernel.activate_failed: "Activation failed: {{.Error}}"
+resources.kernel.download_failed: "Download failed: {{.Error}}"
+resources.kernel.delete_confirm: "Permanently delete v{{.Version}}? This action cannot be undone."
+resources.delete_failed: "Delete failed: {{.Error}}"
+resources.kernel.deleted: "Deleted v{{.Version}}"
+resources.refresh_failed: "Refresh failed: {{.Error}}"
+resources.kernel.refresh_first: Please refresh the version list first
+resources.kernel.manual_scan_hint: Place the extracted mihomo executable at the specified path, then scan
+resources.external.refresh_status: Refresh status
+resources.external.download_url: Download URL
+resources.external.save_url: Save URL
+resources.external.force_update: Force update
+resources.external.restore_url: Restore default URL
+resources.external.validation_failed: "{{.Name}} update/validation failed"
+resources.external.download_address: "Download URL: {{.URL}}"
+resources.external.manual_download: |-
+  Manually download the {{.Name}} file and place it at:
+  {{.Path}}
+resources.external.manual_requirements: The filename must remain {{.Filename}}; the file must be a non-empty regular file, not a symbolic link, and must not be writable by group or other users.
+resources.external.scan_failed: "Scan failed: {{.Error}}"
+resources.external.manual_recognized: "{{.Name}} manual file recognized"
+resources.external.read_failed: "Failed to read resource status: {{.Error}}"
+resources.external.missing: Missing
+resources.external.available: Available
+resources.external.invalid: Invalid file
+resources.external.last_updated: "Last downloaded/updated: "
+resources.external.last_issue: "Recent issue: "
+resources.external.local_path: "Local: "
+resources.external.save_failed: "Failed to save URL: {{.Error}}"
+resources.external.saved: Download URL saved; click Force update when needed
+resources.external.updating: "Force updating {{.Name}}..."
+resources.external.update_failed: "Update failed: {{.Error}}"
+resources.external.updated: Resource force-updated
+resources.external.manual_scan_hint: Place the manually downloaded file at the specified path, then scan
+resources.external.restore_confirm: |-
+  Restore the default download URL for {{.Name}}?
+  This will not download or overwrite the current local resource.
+resources.external.restore_default: Restore default
+resources.external.restore_failed: "Failed to restore default URL: {{.Error}}"
+resources.external.restored: "{{.Name}} default download URL restored; click Force update when needed"
+system_proxy.session_hint: |
+  Written to ~/.bashrc, ~/.zshrc, and ~/.profile, and synchronized with the current desktop session.
+
+  • This terminal and other open terminals: run source ~/.bashrc (or source ~/.zshrc)
+  • New terminals / desktop applications: applied automatically
+system_proxy.clear_hint: |
+  Removed proxy blocks from shell configuration files and cleared current process and user-session variables.
+
+  Open terminals still hold the old variables (Unix does not allow a process to modify another running shell's environment).
+  Run this in each terminal:
+    unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy
+
+  Or open a new terminal (keeping no_proxy is recommended so local traffic bypasses the proxy).

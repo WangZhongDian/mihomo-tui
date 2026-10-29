@@ -33,7 +33,7 @@ func toggleSystemProxy(app *tview.Application, pages *tview.Pages, enable bool, 
 					mihomotui.Warnf("同步系统代理到当前会话失败: %v", serr)
 				}
 				if perr := mihomotui.SetSystemProxyPreference(enable); perr != nil {
-					err = fmt.Errorf("环境变量已写入，但偏好保存失败: %w", perr)
+					err = fmt.Errorf("%s: %w", T("system_proxy.action.preference_save_failed"), perr)
 				}
 			}
 			app.QueueUpdateDraw(func() {
@@ -42,16 +42,16 @@ func toggleSystemProxy(app *tview.Application, pages *tview.Pages, enable bool, 
 				}
 				if err != nil {
 					mihomotui.Warnf("系统代理设置失败: %v", err)
-					ShowAlertModal(app, pages, "系统代理设置失败", err.Error())
+					ShowAlertModal(app, pages, T("system_proxy.action.failed"), err.Error())
 					return
 				}
 				if enable {
 					mihomotui.Infof("系统代理已开启")
-					ShowAlertModal(app, pages, "系统代理已开启", mihomotui.SystemProxySessionHint())
+					ShowAlertModal(app, pages, T("system_proxy.action.enabled"), mihomotui.SystemProxySessionHint())
 					return
 				}
 				mihomotui.Infof("系统代理已关闭")
-				ShowAlertModal(app, pages, "系统代理已关闭", mihomotui.SystemProxyClearHint())
+				ShowAlertModal(app, pages, T("system_proxy.action.disabled"), mihomotui.SystemProxyClearHint())
 			})
 		}()
 	}
@@ -71,11 +71,9 @@ func toggleSystemProxy(app *tview.Application, pages *tview.Pages, enable bool, 
 				apply()
 				return
 			}
-			ShowModal(app, pages, "代理端口未监听",
-				fmt.Sprintf("本地端口 127.0.0.1:%d 当前没有监听（mihomo 内核可能未启动）。\n\n"+
-					"此时开启系统代理，所有走代理的程序都会连接失败。\n"+
-					"建议先在首页启动内核，再开启系统代理。\n\n仍然开启吗？", httpPort),
-				[]string{"仍然开启", "取消"}, func(buttonIndex int, _ string) {
+			ShowModal(app, pages, T("system_proxy.action.port_not_listening"),
+				Tf("system_proxy.action.port_not_listening_message", map[string]any{"Port": httpPort}),
+				[]string{T("system_proxy.action.enable_anyway"), T("common.cancel")}, func(buttonIndex int, _ string) {
 					if buttonIndex == 0 {
 						apply()
 						return

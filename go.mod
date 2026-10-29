@@ -4,8 +4,10 @@ go 1.27.3
 
 require (
 	github.com/gdamore/tcell/v2 v2.8.1
+	github.com/nicksnyder/go-i18n/v2 v2.7.0
 	github.com/rivo/tview v0.42.1-0.20260316130009-63ee97f9e014
 	github.com/rivo/uniseg v0.4.7
+	golang.org/x/text v0.43.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -15,5 +17,4 @@ require (
 	github.com/mattn/go-runewidth v0.0.16 // indirect
 	golang.org/x/sys v0.29.0 // indirect
 	golang.org/x/term v0.28.0 // indirect
-	golang.org/x/text v0.21.0 // indirect
 )

@@ -35,29 +35,29 @@ func NewRulesPage(app *tview.Application) tview.Primitive {
 	pages.AddPage("builtin_rules", builtInRulesPage, true, false)
 
 	// ===== Tab 栏（三个 Button 水平排列）=====
-	tab1Btn := tview.NewButton(" 规则列表 ")
+	tab1Btn := tview.NewButton(" " + T("rules.tab.list") + " ")
 	tab1Btn.SetBorder(false)
-	tab2Btn := tview.NewButton(" 规则订阅 ")
+	tab2Btn := tview.NewButton(" " + T("rules.tab.providers") + " ")
 	tab2Btn.SetBorder(false)
-	tab3Btn := tview.NewButton(" 自定义规则 ")
+	tab3Btn := tview.NewButton(" " + T("rules.tab.custom") + " ")
 	tab3Btn.SetBorder(false)
-	tab4Btn := tview.NewButton(" 内置规则 ")
+	tab4Btn := tview.NewButton(" " + T("rules.tab.builtin") + " ")
 	tab4Btn.SetBorder(false)
 
 	updateTabHighlight := func() {
-		tab1Btn.SetLabel(" 规则列表 ")
-		tab2Btn.SetLabel(" 规则订阅 ")
-		tab3Btn.SetLabel(" 自定义规则 ")
-		tab4Btn.SetLabel(" 内置规则 ")
+		tab1Btn.SetLabel(" " + T("rules.tab.list") + " ")
+		tab2Btn.SetLabel(" " + T("rules.tab.providers") + " ")
+		tab3Btn.SetLabel(" " + T("rules.tab.custom") + " ")
+		tab4Btn.SetLabel(" " + T("rules.tab.builtin") + " ")
 		switch activeTab {
 		case 0:
-			tab1Btn.SetLabel("[规则列表]")
+			tab1Btn.SetLabel("[" + T("rules.tab.list") + "]")
 		case 1:
-			tab2Btn.SetLabel("[规则订阅]")
+			tab2Btn.SetLabel("[" + T("rules.tab.providers") + "]")
 		case 2:
-			tab3Btn.SetLabel("[自定义规则]")
+			tab3Btn.SetLabel("[" + T("rules.tab.custom") + "]")
 		case 3:
-			tab4Btn.SetLabel("[内置规则]")
+			tab4Btn.SetLabel("[" + T("rules.tab.builtin") + "]")
 		}
 	}
 	updateTabHighlight()
@@ -112,7 +112,7 @@ func newRulesListPage(app *tview.Application, pages *tview.Pages) tview.Primitiv
 	maxPerPage := 10
 
 	inputField := tview.NewInputField().
-		SetPlaceholder(" 过滤条件").
+		SetPlaceholder(" " + T("rules.filter.placeholder")).
 		SetFieldBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
 	inputField.SetBorder(true)
 
@@ -165,9 +165,9 @@ func newRulesListPage(app *tview.Application, pages *tview.Pages) tview.Primitiv
 		countInfo.SetText(fmt.Sprintf(" %d / %d ", len(filteredRules), len(allRules)))
 		pageInfo.SetText(fmt.Sprintf(" %d / %d ", currentPage+1, tp))
 		table.SetCell(0, 0, tview.NewTableCell(" # ").SetTextColor(tcell.ColorYellow).SetAttributes(tcell.AttrBold).SetAlign(tview.AlignCenter))
-		table.SetCell(0, 1, tview.NewTableCell(" 规则 ").SetTextColor(tcell.ColorYellow).SetAttributes(tcell.AttrBold))
-		table.SetCell(0, 2, tview.NewTableCell(" 类型 ").SetTextColor(tcell.ColorYellow).SetAttributes(tcell.AttrBold))
-		table.SetCell(0, 3, tview.NewTableCell(" 策略 ").SetTextColor(tcell.ColorYellow).SetAttributes(tcell.AttrBold))
+		table.SetCell(0, 1, tview.NewTableCell(" "+T("rules.column.rule")+" ").SetTextColor(tcell.ColorYellow).SetAttributes(tcell.AttrBold))
+		table.SetCell(0, 2, tview.NewTableCell(" "+T("rules.column.type")+" ").SetTextColor(tcell.ColorYellow).SetAttributes(tcell.AttrBold))
+		table.SetCell(0, 3, tview.NewTableCell(" "+T("rules.column.policy")+" ").SetTextColor(tcell.ColorYellow).SetAttributes(tcell.AttrBold))
 		for i := start; i < end; i++ {
 			r := filteredRules[i]
 			row := i - start + 1
@@ -189,7 +189,7 @@ func newRulesListPage(app *tview.Application, pages *tview.Pages) tview.Primitiv
 			table.SetCell(row, 3, policyCell)
 		}
 		if len(filteredRules) == 0 {
-			table.SetCell(1, 1, tview.NewTableCell(" 无匹配规则 ").SetTextColor(tcell.ColorGray))
+			table.SetCell(1, 1, tview.NewTableCell(" "+T("rules.empty.no_match")+" ").SetTextColor(tcell.ColorGray))
 		}
 	}
 
@@ -278,7 +278,7 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 	showModal := func(title, message string) {
 		modal := tview.NewModal().
 			SetText(fmt.Sprintf("%s\n\n%s", title, message)).
-			AddButtons([]string{"确认"}).
+			AddButtons([]string{T("common.confirm")}).
 			SetDoneFunc(func(buttonIndex int, buttonLabel string) {
 				pages.HidePage("modal")
 				pages.RemovePage("modal")
@@ -301,21 +301,21 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 	selectedRp := 0
 
 	urlInput := tview.NewInputField().
-		SetPlaceholder(" 规则订阅链接 (https://...)").
+		SetPlaceholder(" " + T("rules.provider.url_placeholder")).
 		SetFieldBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
 	urlInput.SetBorder(true)
 
 	behaviorDropdown := tview.NewDropDown().
 		SetOptions([]string{"classical", "domain", "ipcidr"}, nil).
 		SetCurrentOption(0)
-	behaviorDropdown.SetBorder(true).SetTitle(" 类型 ")
+	behaviorDropdown.SetBorder(true).SetTitle(" " + T("rules.column.type") + " ")
 
 	proxyGroupDropdown := tview.NewDropDown().
 		SetOptions(mihomotui.PolicyList, nil).
 		SetCurrentOption(0)
-	proxyGroupDropdown.SetBorder(true).SetTitle(" 策略 ")
+	proxyGroupDropdown.SetBorder(true).SetTitle(" " + T("rules.column.policy") + " ")
 
-	importBtn := tview.NewButton(" 导入 ")
+	importBtn := tview.NewButton(" " + T("rules.provider.import") + " ")
 	importBtn.SetBorder(false)
 
 	toolbar := tview.NewFlex().
@@ -368,17 +368,17 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 		go func() {
 			client, err := mihomotui.GetIPCClient()
 			if err != nil {
-				app.QueueUpdateDraw(func() { showModal("刷新失败", err.Error()) })
+				app.QueueUpdateDraw(func() { showModal(T("rules.provider.refresh_failed"), err.Error()) })
 				return
 			}
 			if err := client.IPCRefreshRuleProvider(name); err != nil {
-				app.QueueUpdateDraw(func() { showModal("刷新失败", err.Error()) })
+				app.QueueUpdateDraw(func() { showModal(T("rules.provider.refresh_failed"), err.Error()) })
 				return
 			}
 			cfg2, err := client.IPCGetConfig()
 			app.QueueUpdateDraw(func() {
 				if err != nil {
-					showModal("刷新成功，但同步失败", err.Error())
+					showModal(T("rules.provider.refresh_sync_failed"), err.Error())
 					return
 				}
 				cfg = cfg2
@@ -386,7 +386,7 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 				mihomotui.ResetMihomoAPI()
 				reloadRps()
 				refreshCards()
-				showModal("刷新成功", fmt.Sprintf("已刷新规则订阅: %s", name))
+				showModal(T("rules.provider.refresh_success"), Tf("rules.provider.refreshed", map[string]any{"Name": name}))
 			})
 		}()
 	}
@@ -400,13 +400,13 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 			client, err := mihomotui.GetIPCClient()
 			if err != nil {
 				app.QueueUpdateDraw(func() {
-					showModal("删除失败", err.Error())
+					showModal(T("rules.provider.delete_failed"), err.Error())
 				})
 				return
 			}
 			if err := client.IPCDeleteRuleProvider(name); err != nil {
 				app.QueueUpdateDraw(func() {
-					showModal("删除失败", err.Error())
+					showModal(T("rules.provider.delete_failed"), err.Error())
 				})
 				return
 			}
@@ -444,16 +444,14 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 			if pg == "" {
 				pg = "Auto"
 			}
-			statusText := "[green]上次刷新成功[-]"
+			statusText := "[green]" + T("rules.provider.last_refresh_success") + "[-]"
 			if rp.LastError != "" {
-				statusText = fmt.Sprintf("[red]刷新失败: %s[-]", mihomotui.RedactURLInText(rp.LastError))
+				statusText = "[red]" + Tf("rules.provider.last_refresh_failed", map[string]any{"Error": mihomotui.RedactURLInText(rp.LastError)}) + "[-]"
 			}
-			infoText := fmt.Sprintf(
-				"[blue::b] %s[-:-:-]    行为: %s    格式: %s    间隔: %ds\n"+
-					" 来源: %s    更新: %s    策略: %s  %s",
-				rp.Name, rp.Behavior, rp.Format, rp.Interval,
-				mihomotui.RedactURL(rp.URL), rp.UpdatedAt, pg, statusText,
-			)
+			infoText := Tf("rules.provider.details", map[string]any{
+				"Name": rp.Name, "Behavior": rp.Behavior, "Format": rp.Format, "Interval": rp.Interval,
+				"URL": mihomotui.RedactURL(rp.URL), "UpdatedAt": rp.UpdatedAt, "Policy": pg, "Status": statusText,
+			})
 			info := tview.NewTextView().SetText(infoText).SetDynamicColors(true)
 			refreshBtn := tview.NewButton(" ↻ ")
 			refreshBtn.SetBorder(false)
@@ -465,7 +463,7 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 			deleteBtn.SetSelectedFunc(func() {
 				deleteRp(idx)
 			})
-			policyBtn := tview.NewButton(" 策略 ")
+			policyBtn := tview.NewButton(" " + T("rules.column.policy") + " ")
 			policyBtn.SetBorder(false)
 			policyBtn.SetSelectedFunc(func() {
 				si := cfg.FindRuleProviderByName(rp.Name)
@@ -477,12 +475,12 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 					currentPg = "Auto"
 				}
 				modal := tview.NewModal().
-					SetText(fmt.Sprintf("选择策略组\n\n%s\n当前: %s", rp.Name, currentPg)).
-					AddButtons([]string{"Auto", "DIRECT", "REJECT", "取消"}).
+					SetText(Tf("rules.provider.select_policy", map[string]any{"Name": rp.Name, "Current": currentPg})).
+					AddButtons([]string{"Auto", "DIRECT", "REJECT", T("common.cancel")}).
 					SetDoneFunc(func(buttonIndex int, buttonLabel string) {
 						pages.HidePage("policy_modal")
 						pages.RemovePage("policy_modal")
-						if buttonLabel == "取消" {
+						if buttonIndex == 3 {
 							return
 						}
 						go func() {
@@ -494,14 +492,14 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 							})
 							if err != nil {
 								app.QueueUpdateDraw(func() {
-									showModal("保存失败", err.Error())
+									showModal(T("rules.save_failed"), err.Error())
 								})
 								return
 							}
 							app.QueueUpdateDraw(func() {
 								reloadRps()
 								refreshCards()
-								showModal("修改成功", fmt.Sprintf("策略组已设置为: %s", buttonLabel))
+								showModal(T("rules.provider.update_success"), Tf("rules.provider.policy_set", map[string]any{"Policy": buttonLabel}))
 							})
 						}()
 					})
@@ -526,7 +524,7 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 		if len(ruleProviders) == 0 {
 			empty := tview.NewTextView().
 				SetTextAlign(tview.AlignCenter).
-				SetText("\n暂无规则订阅，请导入")
+				SetText("\n" + T("rules.provider.empty"))
 			listFlex.AddItem(empty, 0, 1, false)
 		}
 		updatePager()
@@ -549,11 +547,11 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 	importBtn.SetSelectedFunc(func() {
 		url := strings.TrimSpace(urlInput.GetText())
 		if url == "" {
-			showModal("导入失败", "请输入规则订阅链接")
+			showModal(T("rules.provider.import_failed"), T("rules.provider.url_required"))
 			return
 		}
 		if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
-			showModal("导入失败", "请输入以 http:// 或 https:// 开头的订阅链接")
+			showModal(T("rules.provider.import_failed"), T("rules.provider.url_invalid"))
 			return
 		}
 		_, behavior := behaviorDropdown.GetCurrentOption()
@@ -568,7 +566,7 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 			client, err := mihomotui.GetIPCClient()
 			if err != nil {
 				app.QueueUpdateDraw(func() {
-					showModal("导入失败", err.Error())
+					showModal(T("rules.provider.import_failed"), err.Error())
 				})
 				return
 			}
@@ -579,7 +577,7 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 			}
 			if err := client.IPCImportRuleProvider(req); err != nil {
 				app.QueueUpdateDraw(func() {
-					showModal("导入失败", err.Error())
+					showModal(T("rules.provider.import_failed"), err.Error())
 				})
 				return
 			}
@@ -594,7 +592,7 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 				urlInput.SetText("")
 				currentPage = totalPages() - 1
 				refreshCards()
-				showModal("导入成功", fmt.Sprintf("成功导入规则订阅: %s", ruleProviders[len(ruleProviders)-1].Name))
+				showModal(T("rules.provider.import_success"), Tf("rules.provider.imported", map[string]any{"Name": ruleProviders[len(ruleProviders)-1].Name}))
 			})
 		}()
 	})
@@ -649,7 +647,7 @@ func newRuleProviderPage(app *tview.Application, pages *tview.Pages) tview.Primi
 			maxPerPage = perPage
 			refreshCards()
 		}
-		statusBar.SetText(fmt.Sprintf(" 共%d条 每页%d条 ", len(ruleProviders), maxPerPage))
+		statusBar.SetText(" " + Tf("rules.provider.pager", map[string]any{"Total": len(ruleProviders), "PerPage": maxPerPage}) + " ")
 		return x, y, width, height
 	})
 
@@ -676,9 +674,9 @@ var customRuleTypes = []customRuleType{
 	{kind: "SRC-IP-CIDR", placeholder: "192.168.1.0/24"},
 	{kind: "DST-PORT", placeholder: "443"},
 	{kind: "SRC-PORT", placeholder: "7890"},
-	{kind: "NETWORK", placeholder: "tcp 或 udp"},
+	{kind: "NETWORK", placeholder: T("rules.custom.placeholder.network")},
 	{kind: "PROCESS-NAME", placeholder: "chrome.exe"},
-	{kind: "RULE-SET", placeholder: "规则订阅名称"},
+	{kind: "RULE-SET", placeholder: T("rules.custom.placeholder.rule_set")},
 }
 
 func customRuleTypeLabels() []string {
@@ -694,13 +692,13 @@ func customRuleTypeLabels() []string {
 func composeCustomRule(kind, content, policy string, noResolve bool) (string, error) {
 	content = strings.TrimSpace(content)
 	if content == "" {
-		return "", fmt.Errorf("请输入规则内容")
+		return "", fmt.Errorf("%s", T("rules.custom.error.content_required"))
 	}
 	if strings.Contains(content, ",") {
-		return "", fmt.Errorf("只需输入规则内容，请勿包含规则类型、策略或逗号")
+		return "", fmt.Errorf("%s", T("rules.custom.error.content_only"))
 	}
 	if strings.Contains(content, "\n") || strings.Contains(content, "\r") {
-		return "", fmt.Errorf("规则内容不能包含换行符")
+		return "", fmt.Errorf("%s", T("rules.custom.error.no_newlines"))
 	}
 	supported := false
 	for _, ruleType := range customRuleTypes {
@@ -711,7 +709,7 @@ func composeCustomRule(kind, content, policy string, noResolve bool) (string, er
 		}
 	}
 	if !supported {
-		return "", fmt.Errorf("不支持的规则类型: %s", kind)
+		return "", fmt.Errorf("%s", Tf("rules.custom.error.unsupported_type", map[string]any{"Type": kind}))
 	}
 	rule := kind + "," + content + "," + policy
 	if noResolve {
@@ -723,9 +721,9 @@ func composeCustomRule(kind, content, policy string, noResolve bool) (string, er
 // newCustomRulesPage manages custom rules on either side of built-in rules.
 func newCustomRulesPage(app *tview.Application, pages *tview.Pages) tview.Primitive {
 	input := tview.NewInputField().SetPlaceholder(customRuleTypes[0].placeholder)
-	input.SetBorder(true).SetTitle("内容")
+	input.SetBorder(true).SetTitle(T("rules.custom.content"))
 	ruleType := tview.NewDropDown().SetOptions(customRuleTypeLabels(), nil).SetCurrentOption(0)
-	ruleType.SetBorder(true).SetTitle("类型")
+	ruleType.SetBorder(true).SetTitle(T("rules.column.type"))
 	noResolve := tview.NewCheckbox().SetLabel("no-resolve")
 	noResolve.SetBorder(true).SetTitle("DNS")
 	noResolveRow := tview.NewFlex().AddItem(noResolve, 0, 0, false)
@@ -743,10 +741,10 @@ func newCustomRulesPage(app *tview.Application, pages *tview.Pages) tview.Primit
 	}
 	ruleType.SetSelectedFunc(func(_ string, index int) { updateType(index) })
 	policy := tview.NewDropDown().SetOptions(mihomotui.PolicyList, nil).SetCurrentOption(0)
-	policy.SetBorder(true).SetTitle("策略")
-	position := tview.NewDropDown().SetOptions([]string{"前置", "后置"}, nil).SetCurrentOption(0)
-	position.SetBorder(true).SetTitle("位置")
-	add := tview.NewButton("添加")
+	policy.SetBorder(true).SetTitle(T("rules.column.policy"))
+	position := tview.NewDropDown().SetOptions([]string{T("rules.custom.position.before"), T("rules.custom.position.after")}, nil).SetCurrentOption(0)
+	position.SetBorder(true).SetTitle(T("rules.custom.position"))
+	add := tview.NewButton(T("rules.custom.add"))
 	list := tview.NewFlex().SetDirection(tview.FlexRow)
 	refresh := func() {}
 	commit := func(change func(*mihomotui.Config)) {
@@ -754,7 +752,7 @@ func newCustomRulesPage(app *tview.Application, pages *tview.Pages) tview.Primit
 			_, err := mihomotui.MutateServerConfig(change)
 			app.QueueUpdateDraw(func() {
 				if err != nil {
-					ShowAlertModal(app, pages, "保存失败", err.Error())
+					ShowAlertModal(app, pages, T("rules.save_failed"), err.Error())
 					return
 				}
 				refresh()
@@ -787,7 +785,7 @@ func newCustomRulesPage(app *tview.Application, pages *tview.Pages) tview.Primit
 				up.SetSelectedFunc(func() { move(-1) })
 				down.SetSelectedFunc(func() { move(1) })
 				del.SetSelectedFunc(func() {
-					ShowConfirmModal(app, pages, "确认删除", rule, func() {
+					ShowConfirmModal(app, pages, T("rules.custom.confirm_delete"), rule, func() {
 						commit(func(c *mihomotui.Config) {
 							target := &c.PreCustomRules
 							if post {
@@ -805,20 +803,20 @@ func newCustomRulesPage(app *tview.Application, pages *tview.Pages) tview.Primit
 				list.AddItem(tview.NewFlex().AddItem(info, 0, 1, false).AddItem(up, 3, 0, false).AddItem(down, 3, 0, false).AddItem(del, 3, 0, false), 1, 0, false)
 			}
 		}
-		addGroup("前置规则", cfg.PreCustomRules, false)
-		addGroup("后置规则", cfg.PostCustomRules, true)
+		addGroup(T("rules.custom.pre_rules"), cfg.PreCustomRules, false)
+		addGroup(T("rules.custom.post_rules"), cfg.PostCustomRules, true)
 	}
 	add.SetSelectedFunc(func() {
 		_, kind := ruleType.GetCurrentOption()
 		_, pg := policy.GetCurrentOption()
 		rule, err := composeCustomRule(kind, input.GetText(), pg, noResolve.IsChecked())
 		if err != nil {
-			ShowAlertModal(app, pages, "添加失败", err.Error())
+			ShowAlertModal(app, pages, T("rules.custom.add_failed"), err.Error())
 			return
 		}
-		_, pos := position.GetCurrentOption()
+		pos, _ := position.GetCurrentOption()
 		commit(func(c *mihomotui.Config) {
-			if pos == "后置" {
+			if pos == 1 {
 				c.PostCustomRules = append(c.PostCustomRules, rule)
 			} else {
 				c.PreCustomRules = append(c.PreCustomRules, rule)
@@ -846,9 +844,9 @@ func newBuiltInRulesPage(app *tview.Application, pages *tview.Pages) tview.Primi
 	perPage := 1
 	lastHeight := 0
 	list := tview.NewFlex().SetDirection(tview.FlexRow)
-	restoreAll := tview.NewButton("恢复全部默认")
-	prev := tview.NewButton("上一页")
-	next := tview.NewButton("下一页")
+	restoreAll := tview.NewButton(T("rules.builtin.restore_all"))
+	prev := tview.NewButton(T("rules.builtin.previous"))
+	next := tview.NewButton(T("rules.builtin.next"))
 	pageInfo := tview.NewTextView().SetTextAlign(tview.AlignCenter)
 	currentPage := 0
 	refresh := func() {}
@@ -857,7 +855,7 @@ func newBuiltInRulesPage(app *tview.Application, pages *tview.Pages) tview.Primi
 			_, err := mihomotui.MutateServerConfig(change)
 			app.QueueUpdateDraw(func() {
 				if err != nil {
-					ShowAlertModal(app, pages, "保存失败", err.Error())
+					ShowAlertModal(app, pages, T("rules.save_failed"), err.Error())
 					return
 				}
 				refresh()
@@ -874,9 +872,9 @@ func newBuiltInRulesPage(app *tview.Application, pages *tview.Pages) tview.Primi
 		list.Clear()
 		for i := start; i < end; i++ {
 			idx, e := i, cfg.BuiltInRules[i]
-			state := "已启用"
+			state := T("rules.builtin.enabled")
 			if !e.Enabled {
-				state = "已禁用"
+				state = T("rules.builtin.disabled")
 			}
 			summary := e.Rule
 			if e.Kind == mihomotui.BuiltInRuleProvider {
@@ -886,7 +884,7 @@ func newBuiltInRulesPage(app *tview.Application, pages *tview.Pages) tview.Primi
 				summary = "MATCH," + e.ProxyGroup
 			}
 			text := tview.NewTextView().SetDynamicColors(true).SetText(fmt.Sprintf("[%s] %s · %s\n%s", state, e.Name, e.Kind, summary))
-			toggle, edit, reset := tview.NewButton("启用/禁用"), tview.NewButton("编辑"), tview.NewButton("恢复")
+			toggle, edit, reset := tview.NewButton(T("rules.builtin.toggle")), tview.NewButton(T("rules.builtin.edit")), tview.NewButton(T("rules.builtin.restore"))
 			up, down := tview.NewButton("↑"), tview.NewButton("↓")
 			if e.Kind == mihomotui.BuiltInRuleMatch {
 				toggle.SetDisabled(true)
@@ -933,9 +931,9 @@ func newBuiltInRulesPage(app *tview.Application, pages *tview.Pages) tview.Primi
 			list.AddItem(card, 4, 0, false)
 		}
 		if len(cfg.BuiltInRules) == 0 {
-			list.AddItem(tview.NewTextView().SetText("暂无内置规则，请使用“恢复全部默认”初始化。"), 0, 1, false)
+			list.AddItem(tview.NewTextView().SetText(T("rules.builtin.empty")), 0, 1, false)
 		}
-		pageInfo.SetText(fmt.Sprintf("第 %d / %d 页 · 共 %d 条", currentPage+1, totalPages, len(cfg.BuiltInRules)))
+		pageInfo.SetText(Tf("rules.builtin.pager", map[string]any{"Current": currentPage + 1, "TotalPages": totalPages, "Total": len(cfg.BuiltInRules)}))
 		prev.SetDisabled(currentPage == 0)
 		next.SetDisabled(currentPage >= totalPages-1)
 	}
@@ -947,7 +945,7 @@ func newBuiltInRulesPage(app *tview.Application, pages *tview.Pages) tview.Primi
 	})
 	next.SetSelectedFunc(func() { currentPage++; refresh() })
 	restoreAll.SetSelectedFunc(func() {
-		ShowConfirmModal(app, pages, "恢复全部默认", "将重置所有内置规则，保留自定义规则。", func() {
+		ShowConfirmModal(app, pages, T("rules.builtin.restore_all"), T("rules.builtin.restore_confirm"), func() {
 			commit(func(c *mihomotui.Config) {
 				c.BuiltInRules = mihomotui.DefaultBuiltInRules()
 				c.BuiltInRulesInitialized = true
@@ -974,29 +972,29 @@ func newBuiltInRulesPage(app *tview.Application, pages *tview.Pages) tview.Primi
 }
 
 func showBuiltInRuleEditor(app *tview.Application, pages *tview.Pages, entry mihomotui.BuiltInRule, done func(mihomotui.BuiltInRule)) {
-	ShowOverlay(app, pages, "builtin_editor", "编辑内置规则（Esc 取消）", func(close func()) (tview.Primitive, tview.Primitive) {
+	ShowOverlay(app, pages, "builtin_editor", T("rules.builtin.editor_title"), func(close func()) (tview.Primitive, tview.Primitive) {
 		form := tview.NewForm()
-		content := tview.NewInputField().SetLabel("规则 ").SetText(entry.Rule)
+		content := tview.NewInputField().SetLabel(T("rules.builtin.rule") + " ").SetText(entry.Rule)
 		url := tview.NewInputField().SetLabel("URL ").SetText(entry.URL)
-		behavior := tview.NewInputField().SetLabel("行为 ").SetText(entry.Behavior)
-		format := tview.NewInputField().SetLabel("格式 ").SetText(entry.Format)
-		interval := tview.NewInputField().SetLabel("间隔(秒) ").SetText(fmt.Sprintf("%d", entry.Interval))
-		group := tview.NewInputField().SetLabel("策略 ").SetText(entry.ProxyGroup)
+		behavior := tview.NewInputField().SetLabel(T("rules.builtin.behavior") + " ").SetText(entry.Behavior)
+		format := tview.NewInputField().SetLabel(T("rules.builtin.format") + " ").SetText(entry.Format)
+		interval := tview.NewInputField().SetLabel(T("rules.builtin.interval") + " ").SetText(fmt.Sprintf("%d", entry.Interval))
+		group := tview.NewInputField().SetLabel(T("rules.column.policy") + " ").SetText(entry.ProxyGroup)
 		if entry.Kind == mihomotui.BuiltInRuleLiteral {
 			form.AddFormItem(content)
 		} else if entry.Kind == mihomotui.BuiltInRuleProvider {
 			form.AddFormItem(url).AddFormItem(behavior).AddFormItem(format).AddFormItem(interval)
 		}
 		form.AddFormItem(group)
-		form.AddButton("保存", func() {
+		form.AddButton(T("common.save"), func() {
 			entry.Rule, entry.URL, entry.Behavior, entry.Format, entry.ProxyGroup = content.GetText(), url.GetText(), behavior.GetText(), format.GetText(), group.GetText()
 			if _, err := fmt.Sscanf(interval.GetText(), "%d", &entry.Interval); entry.Kind == mihomotui.BuiltInRuleProvider && err != nil {
-				ShowAlertModal(app, pages, "输入错误", "更新间隔必须是正整数")
+				ShowAlertModal(app, pages, T("rules.builtin.invalid_input"), T("rules.builtin.interval_positive"))
 				return
 			}
 			close()
 			done(entry)
-		}).AddButton("取消", close)
+		}).AddButton(T("common.cancel"), close)
 		return form, form
 	})
 }

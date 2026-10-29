@@ -48,16 +48,16 @@ func DelayColor(delay int) string {
 func DelayText(delay int) string {
 	switch delay {
 	case mihomotui.DelayUntested:
-		return "未测试"
+		return T("proxy.delay.untested")
 	case mihomotui.DelayTesting:
-		return "测试中"
+		return T("proxy.delay.testing")
 	case mihomotui.DelayTimeout:
 		return delayTimeoutDisplayText
 	default:
 		if delay >= 0 {
 			return fmt.Sprintf("%dms", delay)
 		}
-		return "未知"
+		return T("proxy.delay.unknown")
 	}
 }
 

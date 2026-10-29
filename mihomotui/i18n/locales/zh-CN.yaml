@@ -1,0 +1,507 @@
+common.confirm: 确认
+common.cancel: 取消
+common.close: 关闭
+common.delete: 删除
+common.save: 保存
+common.refresh: 刷新
+common.enabled: 已开启
+common.disabled: 已关闭
+common.yes: 是
+common.no: 否
+nav.home: 首页
+nav.proxy: 代理
+nav.subscription: 订阅
+nav.pools: 订阅池
+nav.connections: 连接
+nav.rules: 规则
+nav.logs: 日志
+nav.resources: 资源管理
+nav.settings: 设置
+nav.menu: 菜单
+startup.connect_error: "无法连接 IPC 服务: {{.Error}}"
+startup.sync_error: "同步配置失败: {{.Error}}"
+startup.select_language: 选择界面语言
+startup.language_prompt: 请选择界面语言 / Choose your language
+startup.language_hint: 此选择仅保存给当前用户，之后可在设置页修改。
+startup.save_language_failed: "保存语言偏好失败: {{.Error}}"
+settings.title: 设置
+settings.system: 系统设置
+settings.mihomo: mihomo 设置
+settings.about: 关于
+settings.autostart: 开机启动
+settings.system_proxy: 系统代理
+settings.tun: 虚拟网卡模式
+settings.language: 语言
+settings.language.follow_system: 跟随系统
+settings.language.restart: 重启 TUI 后生效。
+settings.language.save_failed: 保存语言失败
+settings.log_level: 应用日志级别
+settings.log_dir: 日志目录
+settings.work_dir: 工作目录
+settings.http_port: HTTP 端口
+settings.socks_port: SOCKS5 端口
+settings.mixed_port: 混合端口
+settings.redir_port: Redir 端口
+settings.tproxy_port: TProxy 端口
+settings.allow_lan: 允许局域网
+settings.ipv6: IPv6
+settings.unified_delay: 统一延迟
+settings.auto_redirect: 自动透明代理
+settings.mihomo_log_level: 日志级别
+settings.default_policy: 代理默认策略
+settings.test_url: 延迟测试链接
+settings.shutdown: 关闭后台服务并退出
+settings.about.description: 为 mihomo 内核开发的终端 UI 配置工具
+settings.about.version: "版本: {{.Version}}"
+settings.about.go_version: "Go 版本: {{.Version}}"
+settings.about.repository: "仓库: https://github.com/WangZhongDian/mihomo-tui"
+settings.save_failed: 保存失败
+settings.invalid_input: 无效输入
+settings.invalid_number: 请输入有效数字
+settings.log_dir_required: 日志目录不能为空
+settings.test_url_required: 测试链接不能为空
+proxy.group: "代理组: "
+proxy.test_delay: 测试延迟
+proxy.stop_test: 中断测试
+proxy.test: 测
+proxy.empty: 暂无节点
+proxy.delay.untested: 未测试
+proxy.delay.testing: 测试中
+proxy.delay.timeout: 超时
+connections.title: 连接
+logs.title: 日志
+resources.title: 资源管理
+subscription.title: 订阅
+pools.title: 订阅池
+rules.title: 规则
+
+# dashboard
+"dashboard.pool.none_running": |-
+  暂无运行订阅池
+
+  请前往订阅池页面创建或迁移订阅
+"dashboard.pool.none_enabled": |-
+  暂无已启用订阅池
+
+  请前往订阅池页面启用订阅池
+"dashboard.pool.title": 当前运行订阅池
+"dashboard.pool.mode.failover": 主备
+"dashboard.pool.mode.merge": 合并
+"dashboard.pool.merge_availability": "  参与合并 {{.Available}} / {{.Total}} 个订阅源"
+"dashboard.pool.active_missing": "  [yellow]当前活动源缺失[-]"
+"dashboard.pool.disabled_hint": "  [red]此订阅池已禁用：成员不会生成 provider[-]"
+"dashboard.pool.degraded": 降级
+"dashboard.unknown_reason": 未知原因
+"dashboard.apply_failed": "[red]⚠ 配置未生效（{{.Stage}}）：{{.Reason}}[-]"
+"dashboard.apply_failed_hint": "[red]   内核可能仍在运行旧配置，请在订阅池页面修正后重新保存[-]"
+"dashboard.subscription.healthy": "[green]正常[-]"
+"dashboard.subscription.unavailable": "[red]不可用[-]"
+"dashboard.subscription.failure_count": "[red]连续失败 {{.Count}}[-]"
+"dashboard.subscription.current": " [::b](当前)[-]"
+"dashboard.subscription.remaining": 剩余
+"dashboard.subscription.metadata_invalid": 无法解析有效的订阅元数据
+"dashboard.node.title": 当前节点
+"dashboard.node.initial": " [gray]○[-:-:-] 内核未运行\n    暂无节点信息"
+"dashboard.node.direct": " [green::b]●[-:-:-] 直连模式\n    所有流量直接连接，不经过代理"
+"dashboard.node.active": |-
+   [{{.Color}}::b]●[-:-:-] {{.Node}}
+       {{.Type}}
+
+    代理组: [::u]{{.Group}}[-:-:-]
+
+    节点: [{{.Color}}]●[-] {{.Node}} [{{.DelayColor}}]{{.Delay}}[-]
+"dashboard.node.global_empty": " [green::b]●[-:-:-] 全局模式\n    暂无可用节点"
+"dashboard.node.automatic": |-
+   [{{.Color}}::b]●[-:-:-] {{.Group}}
+       {{.Type}}
+
+    代理组: [::u]{{.Group}}[-:-:-]
+
+    模式: 自动切换（{{.Type}}）
+"dashboard.traffic.title": 流量统计
+"dashboard.traffic.initial": " 上传: [{{.Color}}]0.00[-] B/s\n 下载: [{{.Color}}]0.00[-] B/s\n 总计: [{{.Color}}]0.0[-] MB"
+"dashboard.traffic.live": " 上传: [{{.Color}}]{{printf \"%.2f\" .Up}}[-] KB/s\n 下载: [{{.Color}}]{{printf \"%.2f\" .Down}}[-] KB/s\n 总计: [{{.Color}}]{{printf \"%.2f\" .Total}}[-] MB"
+"dashboard.connection_failed": 连接失败
+"dashboard.status.running": 运行中
+"dashboard.status.stopped": 已停止
+"dashboard.kernel.title": 内核
+"dashboard.kernel.start": 启动内核
+"dashboard.kernel.stop": 停止内核
+"dashboard.kernel.start_failed": 启动失败
+"dashboard.kernel.stop_failed": 停止失败
+"dashboard.kernel.stopped_title": 内核已停止
+"dashboard.kernel.proxy_auto_disabled": 已自动关闭系统代理，避免新终端指向已停止的代理端口。
+"dashboard.kernel.embedded": 一体服务
+"dashboard.kernel.standalone": 分体服务
+"dashboard.kernel.installed": "[{{.Color}}]●[-] 内核已安装 v{{.Version}}"
+"dashboard.kernel.not_installed": 内核未安装
+"dashboard.kernel.running": "[{{.Color}}::b]●[-:-:-] 运行中  {{.Mode}}\n PID: {{.PID}}\n{{.Binary}}"
+"dashboard.kernel.stopped": "[{{.Color}}]○[-:-:-] 已停止  {{.Mode}}\n 内核未运行\n{{.Binary}}"
+"dashboard.resources.title": 外部资源
+"dashboard.resources.download": 下载外部资源
+"dashboard.resources.update": 更新外部资源
+"dashboard.resources.downloading": 下载中...
+"dashboard.resources.not_downloaded": 未下载
+"dashboard.resources.download_failed": 下载失败
+"dashboard.resources.download_succeeded": 下载成功
+"dashboard.resources.updated": 外部资源已更新
+"dashboard.resources.manual_help": 可手动下载并放置外部资源后，在“资源管理 → 外部资源”点击“扫描本地”。
+"dashboard.network.title": 网络设置
+"dashboard.network.system_proxy": 系统代理
+"dashboard.network.tun": 虚拟网卡模式
+"dashboard.network.enable": 开启
+"dashboard.network.disable": 关闭
+"dashboard.network.proxy_enabled": "[black:green] 已开启 [-:-:-]\n\n 系统代理已启用，您的应用将通过代理访问网络"
+"dashboard.network.proxy_disabled": "[black:gray] 已关闭 [-:-:-]\n\n 系统代理已关闭"
+"dashboard.network.tun_enabled": "[black:green] 已开启 [-:-:-]\n\n 虚拟网卡模式已启用"
+"dashboard.network.tun_disabled": "[black:gray] 已关闭 [-:-:-]\n\n 虚拟网卡模式已关闭"
+"dashboard.network.tun_disabled_root_required_prefix": "[black:gray] 已关闭 [-:-:-]\n\n 虚拟网卡模式已关闭\n\n ["
+"dashboard.network.tun_disabled_root_required_suffix": "]⚠ 服务端未以 root 权限运行，无法使用 TUN 模式[-]"
+"dashboard.mode.title": 代理模式
+"dashboard.mode.rule": 规则
+"dashboard.mode.global": 全局
+"dashboard.mode.direct": 直连
+"dashboard.mode.rule_description": "\n 基于预设规则智能判断流量走向"
+"dashboard.mode.global_description": "\n 所有流量通过代理节点转发"
+"dashboard.mode.direct_description": "\n 所有流量直接连接，不经过代理"
+
+# connections
+"connections.close_all": 关闭全部
+"connections.active": 活跃
+"connections.closed": 已关闭
+"connections.filter": 过滤条件
+"connections.stats": " [{{.Color}}]●[-] {{.Count}} 活跃  |  下载: {{.Download}}  |  上传: {{.Upload}}"
+"connections.header.host": 主机
+"connections.header.download": 下载
+"connections.header.upload": 上传
+"connections.header.download_speed": 下载速度
+"connections.header.upload_speed": 上传速度
+"connections.header.chain": 链路
+
+# logs
+"logs.level": "级别: "
+"logs.level.all": 全部
+"logs.clear": 清空
+
+# system proxy action
+"system_proxy.action.failed": 系统代理设置失败
+"system_proxy.action.enabled": 系统代理已开启
+"system_proxy.action.disabled": 系统代理已关闭
+"system_proxy.action.port_not_listening": 代理端口未监听
+"system_proxy.action.port_not_listening_message": "本地端口 127.0.0.1:{{.Port}} 当前没有监听（mihomo 内核可能未启动）。\n\n此时开启系统代理，所有走代理的程序都会连接失败。\n建议先在首页启动内核，再开启系统代理。\n\n仍然开启吗？"
+"system_proxy.action.enable_anyway": 仍然开启
+"system_proxy.action.preference_save_failed": 环境变量已写入，但偏好保存失败
+proxy.delay.unknown: 未知
+common.add: 添加
+settings.tun_exclusions: Tun排除地址
+settings.manage_addresses: 管理地址列表
+settings.fakeip_filter: Fake-IP过滤
+settings.manage_domains: 管理域名列表
+settings.confirm_delete: 确认删除
+settings.add_failed: 添加失败
+settings.address_required: 请输入 IP、CIDR 或域名
+settings.address_invalid: 请输入有效地址
+settings.address_format: 非法地址（需为 IP/CIDR/域名）
+settings.domain_required: 请输入域名
+settings.domain_invalid: 请输入有效域名
+settings.domain_format: 非法域名（需为域名或 *. /+. 前缀，且不能为裸 *）
+settings.exclude_manager: 排除地址管理（Esc 关闭）
+settings.new_address: 新增地址
+settings.address_placeholder: "IP / CIDR / 域名，例如 10.64.0.0/10 或 netbird.example.com"
+settings.input: 输入
+settings.exclude_hint: 每条一个地址；非空时会自动写入 TUN route-exclude-address
+settings.exclude_list: 排除地址列表
+settings.exclude_empty: (空) 点击上方添加 IP/CIDR/域名
+settings.fakeip_manager: Fake-IP 过滤（Esc 关闭）
+settings.new_domain: 新增域名
+settings.domain_placeholder: "域名 / *.域名 / +.域名，例如 +.youmetme.wang"
+settings.fakeip_hint: 命中的域名返回真实 IP（不走 fake-ip）；默认已含 *.lan 与 localhost.ptlogin2.qq.com
+settings.fakeip_list: 自定义过滤域名
+settings.fakeip_empty: (空) 默认仅 *.lan 与 localhost.ptlogin2.qq.com
+# subscriptions
+subscription.url_placeholder: " 订阅链接 (https://...)"
+subscription.import_button: " 导入 "
+subscription.content_button: " 文件/粘贴 "
+subscription.new_button: " 新建 "
+subscription.new_default_name: 新建订阅
+subscription.refresh_failed: 刷新失败
+subscription.refresh_sync_failed: 刷新成功，但同步失败
+subscription.refresh_success: 刷新成功
+subscription.refreshed_name: "已刷新订阅: {{.Name}}"
+subscription.delete_failed: 删除失败
+subscription.editor_title: 编辑订阅（Esc 取消）
+subscription.name_label: "名称: "
+subscription.url_label: "订阅链接: "
+subscription.fetch_direct: 直连
+subscription.fetch_local_mihomo: 本地 mihomo 代理
+subscription.fetch_system: 系统代理
+subscription.fetch_network_label: "拉取网络: "
+subscription.user_agent_label: "User-Agent: "
+subscription.save_button: " 保存 "
+subscription.cancel_button: " 取消 "
+subscription.save_failed: 保存失败
+subscription.name_required: 订阅名称不能为空
+subscription.remote_url_invalid: 远程订阅链接必须以 http:// 或 https:// 开头
+subscription.save_sync_failed: 保存成功，但同步失败
+subscription.save_success: 保存成功
+subscription.save_success_message: 订阅信息已更新；修改远程链接后请点击刷新以下载新内容
+subscription.editor_remote_hint: 修改链接后需手动刷新，旧缓存会继续保留。
+subscription.editor_local_hint: 此订阅来自本地文件或粘贴内容；为保护缓存正文，仅支持修改名称。
+subscription.cache_active: "[green]已由本地缓存接管[-]"
+subscription.cache_pending: "[yellow]等待首次缓存[-]"
+subscription.cache_missing: "[yellow]缺少本地缓存[-]"
+subscription.consecutive_failures: "[yellow]连续失败: {{.Count}}[-]"
+subscription.last_refresh_error: "[red]刷新失败: {{.Error}}[-]"
+subscription.metadata_unavailable: "[yellow]无法解析有效的订阅元数据[-]"
+subscription.quota_remaining: "剩余: %.2fGB"
+subscription.quota_usage: "%.2fGB / %.2fGB"
+subscription.quota_expiry: "  到期: {{.Date}}"
+subscription.pool_merge_suffix: " [gray](合并)[-]"
+subscription.pool_disabled_suffix: " [gray](池已禁用)[-]"
+subscription.pool_unassigned: "[yellow]未分配（未参与运行，请在订阅池页面加入）[-]"
+subscription.card_info: "[blue::b] %s[-:-:-]    %s\n 来源: %s    更新: %s    %s\n [%s]%s[-]  %s    订阅池: %s"
+subscription.edit_button: " ✎ 编辑 "
+subscription.refresh_button: " ↻ 刷新 "
+subscription.delete_button: " ✕ 删除 "
+subscription.empty: "\n暂无订阅，请导入或新建"
+subscription.import_failed: 导入失败
+subscription.import_url_invalid: 请输入以 http:// 或 https:// 开头的订阅链接
+subscription.import_success: 导入成功
+subscription.import_success_name: "成功导入订阅: {{.Name}}\n\n该订阅当前为「未分配」，请到【订阅池】页面把它加入订阅池后才会参与运行。"
+subscription.import_success_generic: 订阅已导入，请在【订阅池】页面加入订阅池后生效。
+subscription.content_import_title: 文件或粘贴内容导入（Esc 取消）
+subscription.source_label: "来源: "
+subscription.source_pasted: 粘贴内容
+subscription.source_file: 本地文件
+subscription.content_placeholder: 粘贴 Clash YAML / Base64 / URI 列表
+subscription.file_path_label: "文件路径: "
+subscription.import: 导入
+subscription.local_file_required: 请选择本地订阅文件
+subscription.read_file_failed: 读取文件失败
+subscription.content_required: 请粘贴订阅内容
+subscription.import_sync_failed: 导入成功，但同步失败
+subscription.content_import_success: 订阅内容已缓存。该订阅当前为「未分配」，请到【订阅池】页面加入订阅池后才会参与运行。
+subscription.create_failed: 新建失败
+subscription.page_status: " 共%d条 每页%d条 "
+pools.runtime_config_generation_failed: 未能生成新的运行配置
+pools.apply_failure: "配置已保存，但运行时应用失败（阶段: {{.Stage}}）：\n{{.Reason}}\n\n内核仍在运行上一次成功生成的旧配置，请修正后重新保存，或到【代理】页面确认节点是否已更新。"
+pools.list_title: 订阅池列表
+pools.new_button: " 新建订阅池 "
+pools.refresh_list_button: " 刷新列表 "
+pools.edit_unavailable: 无法编辑
+pools.data_not_loaded: 订阅数据尚未加载
+pools.editor_title: 订阅池编辑（Tab 切换控件，Esc 返回列表）
+pools.new_default_name: 新订阅池
+pools.name_label: "名称: "
+pools.mode_label: "运行模式: "
+pools.mode_failover_option: 优先级主备（仅活动源）
+pools.mode_merge_option: 合并（全部缓存成员）
+pools.refresh_seconds_label: "刷新秒数: "
+pools.enable_label: 启用此订阅池
+pools.member_order_title: 成员顺序（上方优先）
+pools.member_disabled_suffix: " [gray](已禁用)[-]"
+pools.add_member_label: "添加成员: "
+pools.select_source: 请选择订阅源
+pools.add_member_button: 添加
+pools.move_up: 上移
+pools.move_down: 下移
+pools.set_active: 设为活动
+pools.remove_member: 移除
+pools.toggle_disabled: 禁用/启用
+pools.toggle_failed: 切换失败
+pools.save_button: " 保存 "
+pools.cancel_button: " 取消 "
+pools.save_failed: 保存失败
+pools.invalid_refresh_interval: 刷新间隔必须是正整数秒
+pools.member_required: 启用的订阅池至少需要一个成员
+pools.sync_failed: 同步失败
+pools.saved_not_applied: 保存成功，但未生效
+pools.empty: "\n暂无订阅池。\n\n请点击上方“新建订阅池”创建主备集合。"
+pools.none: 无
+pools.state_disabled: "[yellow]已禁用[-]"
+pools.cache_available: 可用
+pools.cache_missing: 缺失
+pools.state_normal: "[green]正常[-]"
+pools.consecutive_failures: "[yellow]连续失败 {{.Count}}[-]"
+pools.state_degraded: "[red]已降级[-]"
+pools.mode_failover: 优先级主备
+pools.mode_merge: 合并
+pools.merge_participation: "参与合并 %d/%d"
+pools.merge_cache: "%d/%d 可用"
+pools.disabled_run_hint: "\n[red]未参与运行：此池已禁用，成员不会生成 provider[-]"
+pools.skipped: "\n[gray]已跳过: {{.Members}}[-]"
+pools.member_separator: "、"
+pools.card_info: "[yellow::b]%s[-:-:-]  %s\n运行模式: %s    活动源: %s    本地缓存: %s\n成员: %d    刷新间隔: %d 秒\n最近切换: %s\n原因: %s%s%s"
+pools.edit_button: 编辑
+pools.refresh_button: 刷新
+pools.refresh_failed: 刷新失败
+pools.delete_button: 删除
+pools.delete_failed: 删除失败
+pools.deleted_not_applied: 已删除，但未生效
+pools.load_failed: "[red]加载失败: {{.Error}}[-]"
+
+# rules/resources
+rules.tab.list: 规则列表
+rules.tab.providers: 规则订阅
+rules.tab.custom: 自定义规则
+rules.tab.builtin: 内置规则
+rules.filter.placeholder: 过滤条件
+rules.column.rule: 规则
+rules.column.type: 类型
+rules.column.policy: 策略
+rules.empty.no_match: 无匹配规则
+rules.provider.url_placeholder: 规则订阅链接 (https://...)
+rules.provider.import: 导入
+rules.provider.refresh_failed: 刷新失败
+rules.provider.refresh_sync_failed: 刷新成功，但同步失败
+rules.provider.refresh_success: 刷新成功
+rules.provider.refreshed: "已刷新规则订阅: {{.Name}}"
+rules.provider.delete_failed: 删除失败
+rules.provider.last_refresh_success: 上次刷新成功
+rules.provider.last_refresh_failed: "刷新失败: {{.Error}}"
+rules.provider.details: |-
+  [blue::b] {{.Name}}[-:-:-]    行为: {{.Behavior}}    格式: {{.Format}}    间隔: {{.Interval}}s
+   来源: {{.URL}}    更新: {{.UpdatedAt}}    策略: {{.Policy}}  {{.Status}}
+rules.provider.select_policy: |-
+  选择策略组
+
+  {{.Name}}
+  当前: {{.Current}}
+rules.save_failed: 保存失败
+rules.provider.update_success: 修改成功
+rules.provider.policy_set: "策略组已设置为: {{.Policy}}"
+rules.provider.empty: 暂无规则订阅，请导入
+rules.provider.import_failed: 导入失败
+rules.provider.url_required: 请输入规则订阅链接
+rules.provider.url_invalid: 请输入以 http:// 或 https:// 开头的订阅链接
+rules.provider.import_success: 导入成功
+rules.provider.imported: "成功导入规则订阅: {{.Name}}"
+rules.provider.pager: "共{{.Total}}条 每页{{.PerPage}}条"
+rules.custom.placeholder.network: tcp 或 udp
+rules.custom.placeholder.rule_set: 规则订阅名称
+rules.custom.error.content_required: 请输入规则内容
+rules.custom.error.content_only: 只需输入规则内容，请勿包含规则类型、策略或逗号
+rules.custom.error.no_newlines: 规则内容不能包含换行符
+rules.custom.error.unsupported_type: "不支持的规则类型: {{.Type}}"
+rules.custom.content: 内容
+rules.custom.position: 位置
+rules.custom.position.before: 前置
+rules.custom.position.after: 后置
+rules.custom.add: 添加
+rules.custom.confirm_delete: 确认删除
+rules.custom.pre_rules: 前置规则
+rules.custom.post_rules: 后置规则
+rules.custom.add_failed: 添加失败
+rules.builtin.restore_all: 恢复全部默认
+rules.builtin.previous: 上一页
+rules.builtin.next: 下一页
+rules.builtin.enabled: 已启用
+rules.builtin.disabled: 已禁用
+rules.builtin.toggle: 启用/禁用
+rules.builtin.edit: 编辑
+rules.builtin.restore: 恢复
+rules.builtin.empty: 暂无内置规则，请使用“恢复全部默认”初始化。
+rules.builtin.pager: "第 {{.Current}} / {{.TotalPages}} 页 · 共 {{.Total}} 条"
+rules.builtin.restore_confirm: 将重置所有内置规则，保留自定义规则。
+rules.builtin.editor_title: 编辑内置规则（Esc 取消）
+rules.builtin.rule: 规则
+rules.builtin.behavior: 行为
+rules.builtin.format: 格式
+rules.builtin.interval: 间隔(秒)
+rules.builtin.invalid_input: 输入错误
+rules.builtin.interval_positive: 更新间隔必须是正整数
+resources.kernel.tab: 内核管理
+resources.external.tab: 外部资源
+resources.kernel.versions_title: mihomo 内核版本（选择右侧操作执行）
+resources.kernel.refresh_versions: 刷新版本列表
+resources.kernel.update_latest: 更新到最新稳定版
+resources.kernel.scan_manual: 扫描手动放置内核
+resources.kernel.operation_failed: 内核操作失败
+resources.kernel.target_version: "目标版本：v{{.Version}}"
+resources.kernel.manual_download_url: "可手动下载地址：{{.URL}}"
+resources.kernel.manual_help: |-
+  请下载已解压的 mihomo 可执行文件，放置为：
+  {{.Path}}
+
+  要求：普通文件、非符号链接、可执行；扫描时将收紧权限并验证实际版本。
+resources.scan_local: 扫描本地文件
+resources.kernel.scan_manual_failed: "扫描手动内核失败: {{.Error}}"
+resources.kernel.manual_imported: "已导入手动内核 v{{.Version}}"
+resources.kernel.download_percent: "下载 {{.Percent}}%"
+resources.kernel.downloaded_size: "已下载 {{.Size}}"
+resources.kernel.extracting: 正在解压
+resources.kernel.downloaded: 已下载
+resources.operation_failed: "操作失败: {{.Error}}"
+resources.kernel.switched: "已切换到 v{{.Version}}"
+resources.kernel.download_activate: "已下载 v{{.Version}}，请点击“切换”启用"
+resources.ipc_failed: "IPC 连接失败: {{.Error}}"
+resources.kernel.column.version: 版本
+resources.kernel.column.published: 发布日期
+resources.kernel.column.status: 状态
+resources.kernel.column.action: 操作
+resources.kernel.read_failed: "读取版本失败: {{.Error}}"
+resources.kernel.meta: |-
+  来源：{{.Source}}  缓存检查：{{.CheckedAt}}
+  手动内核放置路径：{{.Path}}{{.LastError}}
+resources.kernel.last_refresh_failed: 最近刷新失败：
+resources.kernel.not_downloaded: 未下载
+resources.kernel.download: 下载
+resources.kernel.in_use: 正在使用
+resources.kernel.activate: 切换
+resources.kernel.prerelease: 预发布
+resources.kernel.manual: 手动导入
+resources.kernel.root_only: 仅 root 可操作
+resources.kernel.view_only: 当前身份仅可查看；内核操作需要 root
+resources.kernel.activate_failed: "切换失败: {{.Error}}"
+resources.kernel.download_failed: "下载失败: {{.Error}}"
+resources.kernel.delete_confirm: "彻底删除 v{{.Version}}？此操作无法撤销。"
+resources.delete_failed: "删除失败: {{.Error}}"
+resources.kernel.deleted: "已删除 v{{.Version}}"
+resources.refresh_failed: "刷新失败: {{.Error}}"
+resources.kernel.refresh_first: 请先刷新版本列表
+resources.kernel.manual_scan_hint: 请先将已解压的 mihomo 可执行文件放置到指定路径，再扫描
+resources.external.refresh_status: 刷新状态
+resources.external.download_url: 下载 URL
+resources.external.save_url: 保存 URL
+resources.external.force_update: 强制更新
+resources.external.restore_url: 恢复默认 URL
+resources.external.validation_failed: "{{.Name}} 更新/验证失败"
+resources.external.download_address: "下载地址：{{.URL}}"
+resources.external.manual_download: |-
+  请手动下载 {{.Name}} 文件并放置为：
+  {{.Path}}
+resources.external.manual_requirements: 文件名必须保持为 {{.Filename}}；要求为非空普通文件、非符号链接，且不能允许组/其他用户写入。
+resources.external.scan_failed: "扫描失败: {{.Error}}"
+resources.external.manual_recognized: "{{.Name}} 手动文件已识别"
+resources.external.read_failed: "读取资源状态失败: {{.Error}}"
+resources.external.missing: 缺失
+resources.external.available: 可用
+resources.external.invalid: 文件无效
+resources.external.last_updated: 最近下载/更新：
+resources.external.last_issue: 最近问题：
+resources.external.local_path: 本地：
+resources.external.save_failed: "保存 URL 失败: {{.Error}}"
+resources.external.saved: 下载 URL 已保存；需要时点击“强制更新”
+resources.external.updating: "正在强制更新 {{.Name}}..."
+resources.external.update_failed: "更新失败: {{.Error}}"
+resources.external.updated: 资源已强制更新
+resources.external.manual_scan_hint: 请先将手动下载的文件放置到指定路径，再扫描
+resources.external.restore_confirm: |-
+  恢复 {{.Name}} 的默认下载 URL？
+  不会立即下载或覆盖当前本地资源。
+resources.external.restore_default: 恢复默认
+resources.external.restore_failed: "恢复默认 URL 失败: {{.Error}}"
+resources.external.restored: "{{.Name}} 已恢复默认下载 URL；需要时点击“强制更新”"
+system_proxy.session_hint: |
+  已写入 ~/.bashrc、~/.zshrc、~/.profile，并同步到当前桌面会话。
+
+  • 本终端及其他已打开的终端：执行 source ~/.bashrc（或 source ~/.zshrc）
+  • 新打开的终端 / 桌面应用：自动生效
+system_proxy.clear_hint: |
+  已删除 shell 配置文件中的代理块，并清理当前进程与用户会话变量。
+
+  已打开的终端仍持有旧变量（Unix 限制：进程无法修改其他已运行 shell 的环境），
+  请在其中执行：
+    unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy
+
+  或直接重开终端（no_proxy 建议保留，本机回环不走代理）。

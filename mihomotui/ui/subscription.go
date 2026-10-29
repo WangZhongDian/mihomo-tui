@@ -80,7 +80,7 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 	showModal := func(title, message string) {
 		modal := tview.NewModal().
 			SetText(fmt.Sprintf("%s\n\n%s", title, message)).
-			AddButtons([]string{"确认"}).
+			AddButtons([]string{T("common.confirm")}).
 			SetDoneFunc(func(buttonIndex int, buttonLabel string) {
 				pages.HidePage("modal")
 				pages.RemovePage("modal")
@@ -95,20 +95,20 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 
 	// 输入框
 	inputField := tview.NewInputField().
-		SetPlaceholder(" 订阅链接 (https://...)").
+		SetPlaceholder(T("subscription.url_placeholder")).
 		SetFieldBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
 	inputField.SetBorder(true)
 
 	// 导入按钮
-	importBtn := tview.NewButton(" 导入 ")
+	importBtn := tview.NewButton(T("subscription.import_button"))
 	importBtn.SetBorder(false)
 
 	// 文件/粘贴导入按钮
-	contentBtn := tview.NewButton(" 文件/粘贴 ")
+	contentBtn := tview.NewButton(T("subscription.content_button"))
 	contentBtn.SetBorder(false)
 
 	// 新建按钮
-	newBtn := tview.NewButton(" 新建 ")
+	newBtn := tview.NewButton(T("subscription.new_button"))
 	newBtn.SetBorder(false)
 
 	// 顶部工具栏：按钮之间用 2 格空隙隔开，避免挤在一起。
@@ -178,17 +178,17 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 		go func() {
 			client, err := mihomotui.GetIPCClient()
 			if err != nil {
-				app.QueueUpdateDraw(func() { showModal("刷新失败", err.Error()) })
+				app.QueueUpdateDraw(func() { showModal(T("subscription.refresh_failed"), err.Error()) })
 				return
 			}
 			if err := client.IPCRefreshSubscription(identifier); err != nil {
-				app.QueueUpdateDraw(func() { showModal("刷新失败", err.Error()) })
+				app.QueueUpdateDraw(func() { showModal(T("subscription.refresh_failed"), err.Error()) })
 				return
 			}
 			cfg2, err := client.IPCGetConfig()
 			app.QueueUpdateDraw(func() {
 				if err != nil {
-					showModal("刷新成功，但同步失败", err.Error())
+					showModal(T("subscription.refresh_sync_failed"), err.Error())
 					return
 				}
 				cfg = cfg2
@@ -196,7 +196,7 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 				mihomotui.ResetMihomoAPI()
 				reloadSubs()
 				refreshCards()
-				showModal("刷新成功", fmt.Sprintf("已刷新订阅: %s", name))
+				showModal(T("subscription.refresh_success"), Tf("subscription.refreshed_name", map[string]any{"Name": name}))
 			})
 		}()
 	}
@@ -216,13 +216,13 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 			client, err := mihomotui.GetIPCClient()
 			if err != nil {
 				app.QueueUpdateDraw(func() {
-					showModal("删除失败", err.Error())
+					showModal(T("subscription.delete_failed"), err.Error())
 				})
 				return
 			}
 			if err := client.IPCDeleteSubscription(identifier); err != nil {
 				app.QueueUpdateDraw(func() {
-					showModal("删除失败", err.Error())
+					showModal(T("subscription.delete_failed"), err.Error())
 				})
 				return
 			}
@@ -249,11 +249,11 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 		}
 		sub := subscriptions[idx]
 		var nameField *tview.InputField
-		ShowOverlay(app, pages, "subscription-editor", "编辑订阅（Esc 取消）", func(close func()) (tview.Primitive, tview.Primitive) {
+		ShowOverlay(app, pages, "subscription-editor", T("subscription.editor_title"), func(close func()) (tview.Primitive, tview.Primitive) {
 			form := tview.NewForm().SetButtonsAlign(tview.AlignRight)
-			nameField = tview.NewInputField().SetLabel("名称: ").SetText(sub.Name)
-			urlField := tview.NewInputField().SetLabel("订阅链接: ").SetText(sub.URL)
-			strategyLabels := []string{"直连", "本地 mihomo 代理", "系统代理"}
+			nameField = tview.NewInputField().SetLabel(T("subscription.name_label")).SetText(sub.Name)
+			urlField := tview.NewInputField().SetLabel(T("subscription.url_label")).SetText(sub.URL)
+			strategyLabels := []string{T("subscription.fetch_direct"), T("subscription.fetch_local_mihomo"), T("subscription.fetch_system")}
 			strategyValues := []mihomotui.SubscriptionFetchProxyStrategy{mihomotui.SubscriptionFetchDirect, mihomotui.SubscriptionFetchLocalMihomo, mihomotui.SubscriptionFetchSystem}
 			selectedStrategy := 0
 			for i, value := range strategyValues {
@@ -261,8 +261,8 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 					selectedStrategy = i
 				}
 			}
-			strategyField := tview.NewDropDown().SetLabel("拉取网络: ").SetOptions(strategyLabels, nil).SetCurrentOption(selectedStrategy)
-			userAgentField := tview.NewInputField().SetLabel("User-Agent: ").SetText(sub.UserAgent)
+			strategyField := tview.NewDropDown().SetLabel(T("subscription.fetch_network_label")).SetOptions(strategyLabels, nil).SetCurrentOption(selectedStrategy)
+			userAgentField := tview.NewInputField().SetLabel(T("subscription.user_agent_label")).SetText(sub.UserAgent)
 			// 对文件/粘贴导入，正文不可从 IPC 读回；只允许改名称，避免误以为能编辑缓存正文。
 			isRemote := sub.SourceType == "" || sub.SourceType == mihomotui.SubscriptionSourceURL
 			if !isRemote {
@@ -271,16 +271,16 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 				userAgentField.SetDisabled(true)
 			}
 			form.AddFormItem(nameField).AddFormItem(urlField).AddFormItem(strategyField).AddFormItem(userAgentField)
-			save := tview.NewButton(" 保存 ")
-			cancel := tview.NewButton(" 取消 ").SetSelectedFunc(close)
+			save := tview.NewButton(T("subscription.save_button"))
+			cancel := tview.NewButton(T("subscription.cancel_button")).SetSelectedFunc(close)
 			save.SetSelectedFunc(func() {
 				name, rawURL := strings.TrimSpace(nameField.GetText()), strings.TrimSpace(urlField.GetText())
 				if name == "" {
-					showModal("保存失败", "订阅名称不能为空")
+					showModal(T("subscription.save_failed"), T("subscription.name_required"))
 					return
 				}
 				if isRemote && (!strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://")) {
-					showModal("保存失败", "远程订阅链接必须以 http:// 或 https:// 开头")
+					showModal(T("subscription.save_failed"), T("subscription.remote_url_invalid"))
 					return
 				}
 				strategyIndex, _ := strategyField.GetCurrentOption()
@@ -291,13 +291,13 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 						err = client.IPCUpdateSubscription(sub.ID, mihomotui.SubscriptionUpdateRequest{Name: name, URL: rawURL, UseLocalProxy: strategy == mihomotui.SubscriptionFetchLocalMihomo, FetchProxyStrategy: strategy, UserAgent: strings.TrimSpace(userAgentField.GetText())})
 					}
 					if err != nil {
-						app.QueueUpdateDraw(func() { showModal("保存失败", err.Error()); app.SetFocus(nameField) })
+						app.QueueUpdateDraw(func() { showModal(T("subscription.save_failed"), err.Error()); app.SetFocus(nameField) })
 						return
 					}
 					fresh, err := client.IPCGetConfig()
 					app.QueueUpdateDraw(func() {
 						if err != nil {
-							showModal("保存成功，但同步失败", err.Error())
+							showModal(T("subscription.save_sync_failed"), err.Error())
 							return
 						}
 						cfg = fresh
@@ -306,16 +306,16 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 						reloadSubs()
 						refreshCards()
 						close()
-						showModal("保存成功", "订阅信息已更新；修改远程链接后请点击刷新以下载新内容")
+						showModal(T("subscription.save_success"), T("subscription.save_success_message"))
 					})
 				}()
 			})
 			actions := tview.NewFlex().AddItem(nil, 0, 1, false).AddItem(save, 12, 0, true).AddItem(cancel, 12, 0, false)
 			body := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(form, 6, 0, true).AddItem(tview.NewTextView().SetText(func() string {
 				if isRemote {
-					return "修改链接后需手动刷新，旧缓存会继续保留。"
+					return T("subscription.editor_remote_hint")
 				}
-				return "此订阅来自本地文件或粘贴内容；为保护缓存正文，仅支持修改名称。"
+				return T("subscription.editor_local_hint")
 			}()), 2, 0, false).AddItem(actions, 1, 0, false)
 			return body, nameField
 		})
@@ -353,28 +353,28 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 			bar := strings.Repeat("━", filled) + strings.Repeat("─", progressWidth-filled)
 
 			// 信息文本（3行）
-			statusText := "[green]已由本地缓存接管[-]"
+			statusText := T("subscription.cache_active")
 			switch {
 			case sub.CacheFile == "":
-				statusText = "[yellow]等待首次缓存[-]"
+				statusText = T("subscription.cache_pending")
 			case !sub.CacheAvailable && !sub.Disabled:
-				statusText = "[yellow]缺少本地缓存[-]"
+				statusText = T("subscription.cache_missing")
 			}
 			if sub.FailureCount > 0 {
-				statusText = fmt.Sprintf("[yellow]连续失败: %d[-]", sub.FailureCount)
+				statusText = Tf("subscription.consecutive_failures", map[string]any{"Count": sub.FailureCount})
 			}
 			if sub.LastError != "" {
-				statusText = fmt.Sprintf("[red]刷新失败: %s[-]", mihomotui.RedactURLInText(sub.LastError))
+				statusText = Tf("subscription.last_refresh_error", map[string]any{"Error": mihomotui.RedactURLInText(sub.LastError)})
 			}
-			quotaText := "[yellow]无法解析有效的订阅元数据[-]"
+			quotaText := T("subscription.metadata_unavailable")
 			if sub.MetadataAvailable {
 				if sub.RemainingBytes > 0 && sub.TotalBytes == 0 {
-					quotaText = fmt.Sprintf("剩余: %.2fGB", float64(sub.RemainingBytes)/(1024*1024*1024))
+					quotaText = fmt.Sprintf(T("subscription.quota_remaining"), float64(sub.RemainingBytes)/(1024*1024*1024))
 				} else {
-					quotaText = fmt.Sprintf("%.2fGB / %.2fGB", sub.UsedGB, sub.TotalGB)
+					quotaText = fmt.Sprintf(T("subscription.quota_usage"), sub.UsedGB, sub.TotalGB)
 				}
 				if sub.ExpireAt != "" {
-					quotaText += "  到期: " + sub.ExpireAt
+					quotaText += Tf("subscription.quota_expiry", map[string]any{"Date": sub.ExpireAt})
 				}
 			}
 			// 计算该订阅已分配到哪些订阅池；未归入任何池即"未分配"，不参与运行。
@@ -384,43 +384,41 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 					if memberID == sub.ID {
 						label := SanitizeDisplayText(pool.Name)
 						if pool.Mode == mihomotui.SubscriptionPoolModeMerge {
-							label += " [gray](合并)[-]"
+							label += T("subscription.pool_merge_suffix")
 						}
 						if !pool.Enabled {
-							label += " [gray](池已禁用)[-]"
+							label += T("subscription.pool_disabled_suffix")
 						}
 						poolNames = append(poolNames, label)
 						break
 					}
 				}
 			}
-			poolText := "[yellow]未分配（未参与运行，请在订阅池页面加入）[-]"
+			poolText := T("subscription.pool_unassigned")
 			if len(poolNames) > 0 {
 				poolText = strings.Join(poolNames, ", ")
 			}
 			infoText := fmt.Sprintf(
-				"[blue::b] %s[-:-:-]    %s\n"+
-					" 来源: %s    更新: %s    %s\n"+
-					" [%s]%s[-]  %s    订阅池: %s",
+				T("subscription.card_info"),
 				// 订阅名由用户输入，可能含国旗 emoji 或方括号标签语法。
 				SanitizeDisplayText(sub.Name), quotaText, mihomotui.RedactURL(sub.URL), sub.UpdatedAt, percentText, mihomotui.ColorInfo, bar, statusText, poolText,
 			)
 			info := tview.NewTextView().SetText(infoText).SetDynamicColors(true)
 
 			// 编辑按钮
-			editBtn := tview.NewButton(" ✎ 编辑 ")
+			editBtn := tview.NewButton(T("subscription.edit_button"))
 			editBtn.SetBorder(false)
 			editBtn.SetSelectedFunc(func() { editSub(idx) })
 
 			// 刷新按钮
-			refreshBtn := tview.NewButton(" ↻ 刷新 ")
+			refreshBtn := tview.NewButton(T("subscription.refresh_button"))
 			refreshBtn.SetBorder(false)
 			refreshBtn.SetSelectedFunc(func() {
 				refreshSub(idx)
 			})
 
 			// 删除按钮
-			deleteBtn := tview.NewButton(" ✕ 删除 ")
+			deleteBtn := tview.NewButton(T("subscription.delete_button"))
 			deleteBtn.SetBorder(false)
 			deleteBtn.SetSelectedFunc(func() {
 				deleteSub(idx)
@@ -453,7 +451,7 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 		if len(subscriptions) == 0 {
 			empty := tview.NewTextView().
 				SetTextAlign(tview.AlignCenter).
-				SetText("\n暂无订阅，请导入或新建")
+				SetText(T("subscription.empty"))
 			listFlex.AddItem(empty, 0, 1, false)
 		}
 
@@ -485,7 +483,7 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 
 		// URL 格式校验
 		if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
-			showModal("导入失败", "请输入以 http:// 或 https:// 开头的订阅链接")
+			showModal(T("subscription.import_failed"), T("subscription.import_url_invalid"))
 			return
 		}
 
@@ -493,13 +491,13 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 			client, err := mihomotui.GetIPCClient()
 			if err != nil {
 				app.QueueUpdateDraw(func() {
-					showModal("导入失败", err.Error())
+					showModal(T("subscription.import_failed"), err.Error())
 				})
 				return
 			}
 			if err := client.IPCImportSubscription(url); err != nil {
 				app.QueueUpdateDraw(func() {
-					showModal("导入失败", err.Error())
+					showModal(T("subscription.import_failed"), err.Error())
 				})
 				return
 			}
@@ -516,9 +514,9 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 				currentPage = totalPages() - 1
 				refreshCards()
 				if len(subscriptions) > 0 {
-					showModal("导入成功", fmt.Sprintf("成功导入订阅: %s\n\n该订阅当前为「未分配」，请到【订阅池】页面把它加入订阅池后才会参与运行。", subscriptions[len(subscriptions)-1].Name))
+					showModal(T("subscription.import_success"), Tf("subscription.import_success_name", map[string]any{"Name": subscriptions[len(subscriptions)-1].Name}))
 				} else {
-					showModal("导入成功", "订阅已导入，请在【订阅池】页面加入订阅池后生效。")
+					showModal(T("subscription.import_success"), T("subscription.import_success_generic"))
 				}
 			})
 		}()
@@ -526,12 +524,12 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 
 	// 文件/粘贴导入：使用显式来源模式并将焦点固定到弹窗，避免粘贴落入背景 URL 输入框。
 	contentBtn.SetSelectedFunc(func() {
-		ShowOverlay(app, pages, "content-import", "文件或粘贴内容导入（Esc 取消）", func(close func()) (tview.Primitive, tview.Primitive) {
+		ShowOverlay(app, pages, "content-import", T("subscription.content_import_title"), func(close func()) (tview.Primitive, tview.Primitive) {
 			form := tview.NewForm()
-			nameField := tview.NewInputField().SetLabel("名称: ")
-			modeField := tview.NewDropDown().SetLabel("来源: ").SetOptions([]string{"粘贴内容", "本地文件"}, nil)
-			contentField := tview.NewTextArea().SetPlaceholder("粘贴 Clash YAML / Base64 / URI 列表")
-			pathField := tview.NewInputField().SetLabel("文件路径: ").SetPlaceholder("/path/to/subscription.yaml")
+			nameField := tview.NewInputField().SetLabel(T("subscription.name_label"))
+			modeField := tview.NewDropDown().SetLabel(T("subscription.source_label")).SetOptions([]string{T("subscription.source_pasted"), T("subscription.source_file")}, nil)
+			contentField := tview.NewTextArea().SetPlaceholder(T("subscription.content_placeholder"))
+			pathField := tview.NewInputField().SetLabel(T("subscription.file_path_label")).SetPlaceholder("/path/to/subscription.yaml")
 			pathField.SetDisabled(true)
 			modeField.SetSelectedFunc(func(_ string, index int) {
 				isFile := index == 1
@@ -547,29 +545,29 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 			})
 			form.AddFormItem(nameField).AddFormItem(contentField).AddFormItem(pathField).AddFormItem(modeField)
 			submitting := false
-			form.AddButton("导入", func() {
+			form.AddButton(T("subscription.import"), func() {
 				if submitting {
 					return
 				}
 				name := strings.TrimSpace(nameField.GetText())
 				selected, _ := modeField.GetCurrentOption()
 				content := strings.TrimSpace(contentField.GetText())
-				source, sourceType := "粘贴内容", mihomotui.SubscriptionSourceContent
+				source, sourceType := "Pasted content", mihomotui.SubscriptionSourceContent
 				if selected == 1 {
 					path := strings.TrimSpace(pathField.GetText())
 					if path == "" {
-						showModal("导入失败", "请选择本地订阅文件")
+						showModal(T("subscription.import_failed"), T("subscription.local_file_required"))
 						return
 					}
 					data, err := os.ReadFile(path)
 					if err != nil {
-						showModal("读取文件失败", err.Error())
+						showModal(T("subscription.read_file_failed"), err.Error())
 						return
 					}
 					content, source, sourceType = string(data), path, mihomotui.SubscriptionSourceFile
 				}
 				if content == "" {
-					showModal("导入失败", "请粘贴订阅内容")
+					showModal(T("subscription.import_failed"), T("subscription.content_required"))
 					return
 				}
 				submitting = true
@@ -579,14 +577,18 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 						err = client.IPCImportSubscriptionContent(name, source, sourceType, content, false)
 					}
 					if err != nil {
-						app.QueueUpdateDraw(func() { submitting = false; showModal("导入失败", err.Error()); app.SetFocus(contentField) })
+						app.QueueUpdateDraw(func() {
+							submitting = false
+							showModal(T("subscription.import_failed"), err.Error())
+							app.SetFocus(contentField)
+						})
 						return
 					}
 					cfg2, syncErr := client.IPCGetConfig()
 					app.QueueUpdateDraw(func() {
 						submitting = false
 						if syncErr != nil {
-							showModal("导入成功，但同步失败", syncErr.Error())
+							showModal(T("subscription.import_sync_failed"), syncErr.Error())
 							app.SetFocus(contentField)
 							return
 						}
@@ -596,11 +598,11 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 						reloadSubs()
 						refreshCards()
 						close()
-						showModal("导入成功", "订阅内容已缓存。该订阅当前为「未分配」，请到【订阅池】页面加入订阅池后才会参与运行。")
+						showModal(T("subscription.import_success"), T("subscription.content_import_success"))
 					})
 				}()
 			})
-			form.AddButton("取消", close)
+			form.AddButton(T("common.cancel"), close)
 			return form, contentField
 		})
 	})
@@ -611,12 +613,12 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 			client, err := mihomotui.GetIPCClient()
 			if err != nil {
 				app.QueueUpdateDraw(func() {
-					showModal("新建失败", err.Error())
+					showModal(T("subscription.create_failed"), err.Error())
 				})
 				return
 			}
-			if err := client.IPCImportSubscriptionWithRequest(mihomotui.SubscriptionImportRequest{Name: "新建订阅", Manual: true}); err != nil {
-				app.QueueUpdateDraw(func() { showModal("新建失败", err.Error()) })
+			if err := client.IPCImportSubscriptionWithRequest(mihomotui.SubscriptionImportRequest{Name: T("subscription.new_default_name"), Manual: true}); err != nil {
+				app.QueueUpdateDraw(func() { showModal(T("subscription.create_failed"), err.Error()) })
 				return
 			}
 			cfg2, _ := client.IPCGetConfig()
@@ -696,7 +698,7 @@ func NewSubscriptionPage(app *tview.Application) tview.Primitive {
 		}
 
 		// 在底部状态栏显示自适应信息
-		statusBar.SetText(fmt.Sprintf(" 共%d条 每页%d条 ", len(subscriptions), maxPerPage))
+		statusBar.SetText(fmt.Sprintf(T("subscription.page_status"), len(subscriptions), maxPerPage))
 
 		return x, y, width, height
 	})

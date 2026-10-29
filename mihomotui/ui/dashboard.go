@@ -17,7 +17,7 @@ import (
 func buildSubCardText() string {
 	cfg := mihomotui.GlobalConfig()
 	if len(cfg.SubscriptionPools) == 0 {
-		return "[" + mihomotui.ColorMuted + "]暂无运行订阅池\n\n请前往订阅池页面创建或迁移订阅[-]"
+		return "[" + mihomotui.ColorMuted + "]" + T("dashboard.pool.none_running") + "[-]"
 	}
 	byID := make(map[string]mihomotui.SubscriptionMeta, len(cfg.Subscriptions))
 	for _, sub := range cfg.Subscriptions {
@@ -29,15 +29,15 @@ func buildSubCardText() string {
 	if status := mihomotui.LastRuntimeApply(); status.HasApplied && !status.Applied {
 		reason := strings.TrimSpace(status.Error)
 		if reason == "" {
-			reason = "未知原因"
+			reason = T("dashboard.unknown_reason")
 		}
-		lines = append(lines, fmt.Sprintf("[red]⚠ 配置未生效（%s）：%s[-]", status.Stage, reason))
-		lines = append(lines, "[red]   内核可能仍在运行旧配置，请在订阅池页面修正后重新保存[-]", "")
+		lines = append(lines, Tf("dashboard.apply_failed", map[string]any{"Stage": status.Stage, "Reason": reason}))
+		lines = append(lines, T("dashboard.apply_failed_hint"), "")
 	}
 	for _, pool := range cfg.SubscriptionPools {
-		mode := "主备"
+		mode := T("dashboard.pool.mode.failover")
 		if pool.Mode == mihomotui.SubscriptionPoolModeMerge {
-			mode = "合并"
+			mode = T("dashboard.pool.mode.merge")
 		}
 		state := "[green]●[-]"
 		if pool.Degraded {
@@ -51,12 +51,12 @@ func buildSubCardText() string {
 		lines = append(lines, fmt.Sprintf("%s [::b]%s[-]  (%s)", state, SanitizeDisplayText(pool.Name), mode))
 		availability := cfg.PoolAvailability(pool)
 		if pool.Mode == mihomotui.SubscriptionPoolModeMerge {
-			lines = append(lines, fmt.Sprintf("  参与合并 %d / %d 个订阅源", availability.Available, availability.Total))
+			lines = append(lines, Tf("dashboard.pool.merge_availability", map[string]any{"Available": availability.Available, "Total": availability.Total}))
 		} else if _, ok := byID[pool.ActiveMemberID]; !ok {
-			lines = append(lines, "  [yellow]当前活动源缺失[-]")
+			lines = append(lines, T("dashboard.pool.active_missing"))
 		}
 		if !pool.Enabled {
-			lines = append(lines, "  [red]此订阅池已禁用：成员不会生成 provider[-]")
+			lines = append(lines, T("dashboard.pool.disabled_hint"))
 		}
 		// 在池摘要下逐行展示成员，方便从首页直接确认参与运行的订阅源健康和额度。
 		for _, id := range pool.Members {
@@ -64,29 +64,29 @@ func buildSubCardText() string {
 			if !ok {
 				continue
 			}
-			status := "[green]正常[-]"
+			status := T("dashboard.subscription.healthy")
 			if !mihomotui.SubscriptionCacheAvailable(sub) {
-				status = "[red]不可用[-]"
+				status = T("dashboard.subscription.unavailable")
 				if sub.FailureCount > 0 {
-					status = fmt.Sprintf("[red]连续失败 %d[-]", sub.FailureCount)
+					status = Tf("dashboard.subscription.failure_count", map[string]any{"Count": sub.FailureCount})
 				}
 			}
 			current := ""
 			if pool.Mode != mihomotui.SubscriptionPoolModeMerge && id == pool.ActiveMemberID {
-				current = " [::b](当前)[-]"
+				current = T("dashboard.subscription.current")
 			}
 			line := fmt.Sprintf("  • %s%s · %s", SanitizeDisplayText(sub.Name), current, status)
 			if remaining := subscriptionRemainingText(sub); remaining != "" {
-				line += " · 剩余 " + remaining
+				line += " · " + T("dashboard.subscription.remaining") + " " + remaining
 			}
 			lines = append(lines, line)
 		}
 		if pool.Degraded && pool.LastSwitchReason != "" {
-			lines = append(lines, "  降级: "+pool.LastSwitchReason)
+			lines = append(lines, "  "+T("dashboard.pool.degraded")+": "+pool.LastSwitchReason)
 		}
 	}
 	if len(lines) == 0 {
-		return "[" + mihomotui.ColorMuted + "]暂无已启用订阅池\n\n请前往订阅池页面启用订阅池[-]"
+		return "[" + mihomotui.ColorMuted + "]" + T("dashboard.pool.none_enabled") + "[-]"
 	}
 	return strings.Join(lines, "\n")
 }
@@ -104,12 +104,12 @@ func subscriptionRemainingText(sub mihomotui.SubscriptionMeta) string {
 
 func subscriptionQuotaText(sub mihomotui.SubscriptionMeta) string {
 	if sub.RemainingBytes > 0 && sub.TotalBytes == 0 {
-		return fmt.Sprintf("剩余 %.2fGB", float64(sub.RemainingBytes)/(1024*1024*1024))
+		return T("dashboard.subscription.remaining") + fmt.Sprintf(" %.2fGB", float64(sub.RemainingBytes)/(1024*1024*1024))
 	}
 	if sub.TotalGB > 0 {
 		return fmt.Sprintf("%.2fGB / %.2fGB", sub.UsedGB, sub.TotalGB)
 	}
-	return "无法解析有效的订阅元数据"
+	return T("dashboard.subscription.metadata_invalid")
 }
 
 // NewDashboard 创建首页仪表盘页面
@@ -129,15 +129,15 @@ func NewDashboard(app *tview.Application) (Page, func()) {
 		SetText(buildSubCardText()).
 		SetDynamicColors(true)
 	subCard.SetBorder(true).
-		SetTitle(" 当前运行订阅池 ").
+		SetTitle(" " + T("dashboard.pool.title") + " ").
 		SetTitleAlign(tview.AlignLeft)
 
 	// 当前节点卡片（动态更新）
 	nodeCard := tview.NewTextView().
-		SetText(" [" + mihomotui.ColorMuted + "]○[-:-:-] 内核未运行\n    暂无节点信息").
+		SetText(T("dashboard.node.initial")).
 		SetDynamicColors(true)
 	nodeCard.SetBorder(true).
-		SetTitle(" 当前节点 ").
+		SetTitle(" " + T("dashboard.node.title") + " ").
 		SetTitleAlign(tview.AlignLeft)
 
 	updateNodeCard := func() {
@@ -164,11 +164,7 @@ func NewDashboard(app *tview.Application) (Page, func()) {
 
 			switch proxyMode {
 			case "direct":
-				text = fmt.Sprintf(
-					" [%s::b]●[-:-:-] 直连模式\n"+
-						"    所有流量直接连接，不经过代理",
-					mihomotui.ColorOK,
-				)
+				text = T("dashboard.node.direct")
 			case "global":
 				group := groupMap["GLOBAL"]
 				if group != nil && len(group.Nodes) > 0 {
@@ -191,20 +187,12 @@ func NewDashboard(app *tview.Application) (Page, func()) {
 					nodeName := SanitizeDisplayText(activeNode.Name)
 					nodeType := SanitizeDisplayText(activeNode.Type)
 					groupLabel := SanitizeDisplayText(group.Name)
-					text = fmt.Sprintf(
-						" [%s::b]●[-:-:-] %s\n"+
-							"    %s\n\n"+
-							" 代理组: [::u]%s[-:-:-]\n\n"+
-							" 节点: [%s]●[-] %s [%s]%s[-]",
-						mihomotui.ColorOK, nodeName, nodeType, groupLabel,
-						mihomotui.ColorOK, nodeName, delayColor, delayText,
-					)
+					text = Tf("dashboard.node.active", map[string]any{
+						"Color": mihomotui.ColorOK, "Node": nodeName, "Type": nodeType, "Group": groupLabel,
+						"DelayColor": delayColor, "Delay": delayText,
+					})
 				} else {
-					text = fmt.Sprintf(
-						" [%s::b]●[-:-:-] 全局模式\n"+
-							"    暂无可用节点",
-						mihomotui.ColorOK,
-					)
+					text = T("dashboard.node.global_empty")
 				}
 			default: // rule 及其他模式
 				groupName := cfg.DefaultProxyGroup
@@ -224,15 +212,10 @@ func NewDashboard(app *tview.Application) (Page, func()) {
 
 				// Fallback / LoadBalance 不显示当前节点
 				if group.Type == "Fallback" || group.Type == "LoadBalance" {
-					text = fmt.Sprintf(
-						" [%s::b]●[-:-:-] %s\n"+
-							"    %s\n\n"+
-							" 代理组: [::u]%s[-:-:-]\n\n"+
-							" 模式: 自动切换（%s）",
-						mihomotui.ColorOK,
-						SanitizeDisplayText(group.Name), SanitizeDisplayText(group.Type),
-						SanitizeDisplayText(group.Name), SanitizeDisplayText(group.Type),
-					)
+					text = Tf("dashboard.node.automatic", map[string]any{
+						"Color": mihomotui.ColorOK,
+						"Group": SanitizeDisplayText(group.Name), "Type": SanitizeDisplayText(group.Type),
+					})
 				} else {
 					var activeNode *mihomotui.ProxyNode
 					if group.Now != "" {
@@ -258,14 +241,10 @@ func NewDashboard(app *tview.Application) (Page, func()) {
 					nodeName := SanitizeDisplayText(activeNode.Name)
 					nodeType := SanitizeDisplayText(activeNode.Type)
 					groupLabel := SanitizeDisplayText(group.Name)
-					text = fmt.Sprintf(
-						" [%s::b]●[-:-:-] %s\n"+
-							"    %s\n\n"+
-							" 代理组: [::u]%s[-:-:-]\n\n"+
-							" 节点: [%s]●[-] %s [%s]%s[-]",
-						mihomotui.ColorOK, nodeName, nodeType, groupLabel,
-						mihomotui.ColorOK, nodeName, delayColor, delayText,
-					)
+					text = Tf("dashboard.node.active", map[string]any{
+						"Color": mihomotui.ColorOK, "Node": nodeName, "Type": nodeType, "Group": groupLabel,
+						"DelayColor": delayColor, "Delay": delayText,
+					})
 				}
 			}
 
@@ -282,14 +261,10 @@ func NewDashboard(app *tview.Application) (Page, func()) {
 	modeCard, refreshModeCard := newProxyModeCard(app)
 	// 流量统计卡片
 	statsCard := tview.NewTextView().
-		SetText(
-			" 上传: [" + mihomotui.ColorWarn + "]0.00[-] B/s\n" +
-				" 下载: [" + mihomotui.ColorWarn + "]0.00[-] B/s\n" +
-				" 总计: [" + mihomotui.ColorWarn + "]0.0[-] MB",
-		).
+		SetText(Tf("dashboard.traffic.initial", map[string]any{"Color": mihomotui.ColorWarn})).
 		SetDynamicColors(true)
 	statsCard.SetBorder(true).
-		SetTitle(" 流量统计 ").
+		SetTitle(" " + T("dashboard.traffic.title") + " ").
 		SetTitleAlign(tview.AlignLeft)
 
 	// 根级 Pages 容器与弹窗（已在页面开头创建，供各卡片共用）
@@ -357,12 +332,9 @@ func NewDashboard(app *tview.Application) (Page, func()) {
 			totalUp += upSpeed
 			totalDown += downSpeed
 			app.QueueUpdateDraw(func() {
-				statsCard.SetText(fmt.Sprintf(
-					" 上传: ["+mihomotui.ColorWarn+"]%.2f[-] KB/s\n"+
-						" 下载: ["+mihomotui.ColorWarn+"]%.2f[-] KB/s\n"+
-						" 总计: ["+mihomotui.ColorWarn+"]%.2f[-] MB",
-					upSpeed, downSpeed, (totalUp+totalDown)/1024,
-				))
+				statsCard.SetText(Tf("dashboard.traffic.live", map[string]any{
+					"Color": mihomotui.ColorWarn, "Up": upSpeed, "Down": downSpeed, "Total": (totalUp + totalDown) / 1024,
+				}))
 			})
 		}
 	}()
@@ -407,9 +379,9 @@ func newKernelStatusCard(app *tview.Application, showModal func(string, string),
 	resText := tview.NewTextView().
 		SetDynamicColors(true)
 
-	actionBtn := tview.NewButton(" 启动内核 ")
+	actionBtn := tview.NewButton(" " + T("dashboard.kernel.start") + " ")
 	actionBtn.SetBorder(false)
-	resBtn := tview.NewButton(" 下载外部资源 ")
+	resBtn := tview.NewButton(" " + T("dashboard.resources.download") + " ")
 	resBtn.SetBorder(false)
 
 	isRunning := false
@@ -420,51 +392,49 @@ func newKernelStatusCard(app *tview.Application, showModal func(string, string),
 
 	updateResText := func() {
 		var sb strings.Builder
-		sb.WriteString("[::b] 外部资源[-:-:-]\n")
+		sb.WriteString("[::b] " + T("dashboard.resources.title") + "[-:-:-]\n")
 		allExist := true
 		for _, r := range resourceInfos {
 			if r.Exists {
 				fmt.Fprintf(&sb, " ["+mihomotui.ColorOK+"]●[-] %s  %s\n",
 					r.Name, mihomotui.FormatSize(r.Size))
 			} else {
-				fmt.Fprintf(&sb, " ["+mihomotui.ColorMuted+"]○[-] %s  未下载\n", r.Name)
+				fmt.Fprintf(&sb, " ["+mihomotui.ColorMuted+"]○[-] %s  "+T("dashboard.resources.not_downloaded")+"\n", r.Name)
 				allExist = false
 			}
 		}
 		resText.SetText(sb.String())
 		if allExist {
-			resBtn.SetLabel(" 更新外部资源 ")
+			resBtn.SetLabel(" " + T("dashboard.resources.update") + " ")
 		} else {
-			resBtn.SetLabel(" 下载外部资源 ")
+			resBtn.SetLabel(" " + T("dashboard.resources.download") + " ")
 		}
 	}
 
 	modeText := func() string {
 		if launchMode == "embedded" {
-			return "[" + mihomotui.ColorInfo + "]一体服务[-]"
+			return "[" + mihomotui.ColorInfo + "]" + T("dashboard.kernel.embedded") + "[-]"
 		}
-		return "[" + mihomotui.ColorWarn + "]分体服务[-]"
+		return "[" + mihomotui.ColorWarn + "]" + T("dashboard.kernel.standalone") + "[-]"
 	}
 
 	updateStatus := func() {
 		var binaryStatus string
 		if installedVersion != "" {
-			binaryStatus = fmt.Sprintf("["+mihomotui.ColorOK+"]●[-] 内核已安装 v%s", installedVersion)
+			binaryStatus = Tf("dashboard.kernel.installed", map[string]any{"Color": mihomotui.ColorOK, "Version": installedVersion})
 		} else {
-			binaryStatus = "[" + mihomotui.ColorMuted + "]○[-] 内核未安装"
+			binaryStatus = "[" + mihomotui.ColorMuted + "]○[-] " + T("dashboard.kernel.not_installed")
 		}
 		if isRunning {
-			statusText.SetText(fmt.Sprintf(
-				"["+mihomotui.ColorOK+"::b]●[-:-:-] 运行中  %s\n PID: %d\n%s",
-				modeText(), pid, binaryStatus,
-			))
-			actionBtn.SetLabel(" 停止内核 ")
+			statusText.SetText(Tf("dashboard.kernel.running", map[string]any{
+				"Color": mihomotui.ColorOK, "Mode": modeText(), "PID": pid, "Binary": binaryStatus,
+			}))
+			actionBtn.SetLabel(" " + T("dashboard.kernel.stop") + " ")
 		} else {
-			statusText.SetText(fmt.Sprintf(
-				"["+mihomotui.ColorMuted+"]○[-:-:-] 已停止  %s\n 内核未运行\n%s",
-				modeText(), binaryStatus,
-			))
-			actionBtn.SetLabel(" 启动内核 ")
+			statusText.SetText(Tf("dashboard.kernel.stopped", map[string]any{
+				"Color": mihomotui.ColorMuted, "Mode": modeText(), "Binary": binaryStatus,
+			}))
+			actionBtn.SetLabel(" " + T("dashboard.kernel.start") + " ")
 		}
 		updateResText()
 	}
@@ -502,14 +472,14 @@ func newKernelStatusCard(app *tview.Application, showModal func(string, string),
 			client, err := mihomotui.GetIPCClient()
 			if err != nil {
 				app.QueueUpdateDraw(func() {
-					showModal("连接失败", err.Error())
+					showModal(T("dashboard.connection_failed"), err.Error())
 				})
 				return
 			}
 			if isRunning {
 				if err := client.IPCStopMihomo(); err != nil {
 					app.QueueUpdateDraw(func() {
-						showModal("停止失败", err.Error())
+						showModal(T("dashboard.kernel.stop_failed"), err.Error())
 					})
 					return
 				}
@@ -524,14 +494,14 @@ func newKernelStatusCard(app *tview.Application, showModal func(string, string),
 				}
 				if disabled {
 					app.QueueUpdateDraw(func() {
-						showModal("内核已停止", "已自动关闭系统代理，避免新终端指向已停止的代理端口。\n\n"+
+						showModal(T("dashboard.kernel.stopped_title"), T("dashboard.kernel.proxy_auto_disabled")+"\n\n"+
 							mihomotui.SystemProxyClearHint())
 					})
 				}
 			} else {
 				if err := client.IPCStartMihomo(); err != nil {
 					app.QueueUpdateDraw(func() {
-						showModal("启动失败", err.Error())
+						showModal(T("dashboard.kernel.start_failed"), err.Error())
 					})
 					return
 				}
@@ -544,12 +514,12 @@ func newKernelStatusCard(app *tview.Application, showModal func(string, string),
 	externalManualHelp := func(cause error) string {
 		var sb strings.Builder
 		sb.WriteString(cause.Error())
-		sb.WriteString("\n\n可手动下载并放置外部资源后，在“资源管理 → 外部资源”点击“扫描本地”。")
+		sb.WriteString("\n\n" + T("dashboard.resources.manual_help"))
 		for _, resource := range resourceInfos {
 			if resource.Path == "" {
 				continue
 			}
-			fmt.Fprintf(&sb, "\n%s：%s", resource.Name, resource.Path)
+			fmt.Fprintf(&sb, "\n%s: %s", resource.Name, resource.Path)
 		}
 		return sb.String()
 	}
@@ -557,7 +527,7 @@ func newKernelStatusCard(app *tview.Application, showModal func(string, string),
 	resBtn.SetSelectedFunc(func() {
 		go func() {
 			app.QueueUpdateDraw(func() {
-				resBtn.SetLabel(" 下载中... ")
+				resBtn.SetLabel(" " + T("dashboard.resources.downloading") + " ")
 			})
 			client, err := mihomotui.GetIPCClient()
 			if err == nil {
@@ -565,13 +535,13 @@ func newKernelStatusCard(app *tview.Application, showModal func(string, string),
 			}
 			if err != nil {
 				app.QueueUpdateDraw(func() {
-					showModal("下载失败", externalManualHelp(err))
+					showModal(T("dashboard.resources.download_failed"), externalManualHelp(err))
 					updateResText()
 				})
 				return
 			}
 			app.QueueUpdateDraw(func() {
-				showModal("下载成功", "外部资源已更新")
+				showModal(T("dashboard.resources.download_succeeded"), T("dashboard.resources.updated"))
 				updateResText()
 			})
 		}()
@@ -587,7 +557,7 @@ func newKernelStatusCard(app *tview.Application, showModal func(string, string),
 		AddItem(statusText, 0, 1, false).
 		AddItem(resText, 0, 1, false).
 		AddItem(buttons, 1, 0, true)
-	card.SetBorder(true).SetTitle(" 内核 ")
+	card.SetBorder(true).SetTitle(" " + T("dashboard.kernel.title") + " ")
 	card.SetBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
 
 	// 定时刷新状态
@@ -621,13 +591,13 @@ func newNetSettingsCard(app *tview.Application, pages *tview.Pages) (tview.Primi
 
 	content := tview.NewTextView().SetDynamicColors(true)
 
-	tabProxy := tview.NewButton(" ■ 系统代理 ")
+	tabProxy := tview.NewButton(" ■ " + T("dashboard.network.system_proxy") + " ")
 	tabProxy.SetBorder(false)
-	tabTun := tview.NewButton(" □ 虚拟网卡模式 ")
+	tabTun := tview.NewButton(" □ " + T("dashboard.network.tun") + " ")
 	tabTun.SetBorder(false)
 
 	statusIndicator := tview.NewTextView().SetDynamicColors(true)
-	toggleBtn := tview.NewButton(" 关闭 ")
+	toggleBtn := tview.NewButton(" " + T("dashboard.network.disable") + " ")
 	toggleBtn.SetBorder(false)
 
 	update := func() {
@@ -636,34 +606,34 @@ func newNetSettingsCard(app *tview.Application, pages *tview.Pages) (tview.Primi
 		proxyEnabled := mihomotui.GetSystemProxyPreference()
 		tunEnabled := cfg.System.TUN
 		if activeTab == 0 {
-			tabProxy.SetLabel(" ■ 系统代理 ")
-			tabTun.SetLabel(" □ 虚拟网卡模式 ")
+			tabProxy.SetLabel(" ■ " + T("dashboard.network.system_proxy") + " ")
+			tabTun.SetLabel(" □ " + T("dashboard.network.tun") + " ")
 			if proxyEnabled {
-				content.SetText("[black:green] 已开启 [-:-:-]\n\n 系统代理已启用，您的应用将通过代理访问网络")
-				statusIndicator.SetText(" [" + mihomotui.ColorOK + "::b]●[-:-:-] 运行中 ")
-				toggleBtn.SetLabel(" 关闭 ")
+				content.SetText(T("dashboard.network.proxy_enabled"))
+				statusIndicator.SetText(" [" + mihomotui.ColorOK + "::b]●[-:-:-] " + T("dashboard.status.running") + " ")
+				toggleBtn.SetLabel(" " + T("dashboard.network.disable") + " ")
 			} else {
-				content.SetText("[black:gray] 已关闭 [-:-:-]\n\n 系统代理已关闭")
-				statusIndicator.SetText(" [" + mihomotui.ColorMuted + "]○[-:-:-] 已停止 ")
-				toggleBtn.SetLabel(" 开启 ")
+				content.SetText(T("dashboard.network.proxy_disabled"))
+				statusIndicator.SetText(" [" + mihomotui.ColorMuted + "]○[-:-:-] " + T("dashboard.status.stopped") + " ")
+				toggleBtn.SetLabel(" " + T("dashboard.network.enable") + " ")
 			}
 		} else {
-			tabProxy.SetLabel(" □ 系统代理 ")
-			tabTun.SetLabel(" ■ 虚拟网卡模式 ")
+			tabProxy.SetLabel(" □ " + T("dashboard.network.system_proxy") + " ")
+			tabTun.SetLabel(" ■ " + T("dashboard.network.tun") + " ")
 			if tunEnabled {
-				content.SetText("[black:green] 已开启 [-:-:-]\n\n 虚拟网卡模式已启用")
-				statusIndicator.SetText(" [" + mihomotui.ColorOK + "::b]●[-:-:-] 运行中 ")
-				toggleBtn.SetLabel(" 关闭 ")
+				content.SetText(T("dashboard.network.tun_enabled"))
+				statusIndicator.SetText(" [" + mihomotui.ColorOK + "::b]●[-:-:-] " + T("dashboard.status.running") + " ")
+				toggleBtn.SetLabel(" " + T("dashboard.network.disable") + " ")
 			} else {
 				var msg string
 				if !daemonIsRoot {
-					msg = "[black:gray] 已关闭 [-:-:-]\n\n 虚拟网卡模式已关闭\n\n [" + mihomotui.ColorError + "]⚠ 服务端未以 root 权限运行，无法使用 TUN 模式[-]"
+					msg = T("dashboard.network.tun_disabled_root_required_prefix") + mihomotui.ColorError + T("dashboard.network.tun_disabled_root_required_suffix")
 				} else {
-					msg = "[black:gray] 已关闭 [-:-:-]\n\n 虚拟网卡模式已关闭"
+					msg = T("dashboard.network.tun_disabled")
 				}
 				content.SetText(msg)
-				statusIndicator.SetText(" [" + mihomotui.ColorMuted + "]○[-:-:-] 已停止 ")
-				toggleBtn.SetLabel(" 开启 ")
+				statusIndicator.SetText(" [" + mihomotui.ColorMuted + "]○[-:-:-] " + T("dashboard.status.stopped") + " ")
+				toggleBtn.SetLabel(" " + T("dashboard.network.enable") + " ")
 			}
 		}
 	}
@@ -733,7 +703,7 @@ func newNetSettingsCard(app *tview.Application, pages *tview.Pages) (tview.Primi
 		AddItem(content, 0, 1, false).
 		AddItem(bottom, 1, 0, true)
 
-	card.SetBorder(true).SetTitle(" 网络设置 ")
+	card.SetBorder(true).SetTitle(" " + T("dashboard.network.title") + " ")
 	card.SetBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
 
 	return card, update
@@ -741,12 +711,12 @@ func newNetSettingsCard(app *tview.Application, pages *tview.Pages) (tview.Primi
 
 // newProxyModeCard 创建可交互的代理模式卡片
 func newProxyModeCard(app *tview.Application) (tview.Primitive, func()) {
-	modes := []string{"规则", "全局", "直连"}
+	modes := []string{T("dashboard.mode.rule"), T("dashboard.mode.global"), T("dashboard.mode.direct")}
 	modeValues := []string{"rule", "global", "direct"}
 	descriptions := []string{
-		"\n 基于预设规则智能判断流量走向",
-		"\n 所有流量通过代理节点转发",
-		"\n 所有流量直接连接，不经过代理",
+		T("dashboard.mode.rule_description"),
+		T("dashboard.mode.global_description"),
+		T("dashboard.mode.direct_description"),
 	}
 
 	cfg := mihomotui.GlobalConfig()
@@ -814,7 +784,7 @@ func newProxyModeCard(app *tview.Application) (tview.Primitive, func()) {
 	card := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(tabs, 1, 0, true).
 		AddItem(content, 0, 1, false)
-	card.SetBorder(true).SetTitle(" 代理模式 ")
+	card.SetBorder(true).SetTitle(" " + T("dashboard.mode.title") + " ")
 	card.SetBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
 
 	refresh = func() {

@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"gopkg.in/yaml.v3"
+	"mihomotui/mihomotui/i18n"
 )
 
 // ClientPreferencesFileName 客户端偏好文件名（与 daemon 权威配置 config.yaml 分离）。
@@ -20,6 +21,11 @@ type ClientPreferences struct {
 	// SystemProxy 本用户的系统代理开关。开启时写入当前用户的 shell
 	// 环境变量（~/.bashrc 等），只影响本用户会话。
 	SystemProxy bool `yaml:"system_proxy"`
+	// Language is the current user's explicit UI language. Empty follows the OS.
+	Language string `yaml:"language,omitempty"`
+	// LanguageInitialized distinguishes first-time setup from an existing user
+	// who has chosen to follow the system language.
+	LanguageInitialized bool `yaml:"language_initialized,omitempty"`
 }
 
 var (
@@ -128,6 +134,69 @@ func ClientPrefs() ClientPreferences {
 // GetSystemProxyPreference 返回本用户的系统代理开关状态。
 func GetSystemProxyPreference() bool {
 	return ClientPrefs().SystemProxy
+}
+
+// DetectSystemLanguage exposes OS language detection to the UI layer.
+func DetectSystemLanguage() string { return i18n.DetectSystemLanguage() }
+
+// NeedsLanguageSetup reports whether this user has never initialized the UI.
+// An existing config or preferences file marks an upgrade, not a new install.
+func NeedsLanguageSetup() bool {
+	ensureClientPreferencesLoaded()
+	clientPrefsMu.RLock()
+	defer clientPrefsMu.RUnlock()
+	if clientPrefs.LanguageInitialized {
+		return false
+	}
+	for _, name := range []string{ClientPreferencesFileName, ConfigFileName} {
+		if _, err := os.Stat(filepath.Join(clientPreferencesDir(), name)); err == nil {
+			return false
+		}
+	}
+	return true
+}
+
+// EffectiveLanguage returns the saved language, or the detected system language
+// when the user follows the OS. Unsupported values safely fall back to English.
+func EffectiveLanguage() string {
+	if language := ClientPrefs().Language; language != "" {
+		tag, _ := i18n.NormalizeLanguage(language)
+		return tag
+	}
+	return DetectSystemLanguage()
+}
+
+// SetLanguagePreference saves a fixed language. Use SetFollowSystemPreference
+// to follow the operating system instead.
+func SetLanguagePreference(language string) error {
+	language, ok := i18n.NormalizeLanguage(language)
+	if !ok || language == i18n.FollowSystem {
+		return fmt.Errorf("unsupported UI language")
+	}
+	return setLanguagePreference(language)
+}
+
+// SetFollowSystemPreference marks setup complete and follows the OS language.
+func SetFollowSystemPreference() error {
+	return setLanguagePreference(i18n.FollowSystem)
+}
+
+func setLanguagePreference(language string) error {
+	ensureClientPreferencesLoaded()
+	clientPrefsMu.Lock()
+	defer clientPrefsMu.Unlock()
+	if clientPrefs.LanguageInitialized && clientPrefs.Language == language {
+		return nil
+	}
+	previous := clientPrefs
+	clientPrefs.Language = language
+	clientPrefs.LanguageInitialized = true
+	if err := saveClientPreferencesLocked(); err != nil {
+		clientPrefs = previous
+		return err
+	}
+	Infof("UI language preference saved: language=%q", language)
+	return nil
 }
 
 // SetSystemProxyPreference 设置本用户的系统代理开关并持久化。

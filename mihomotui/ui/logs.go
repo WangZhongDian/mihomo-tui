@@ -32,9 +32,9 @@ func NewLogsPage(app *tview.Application) tview.Primitive {
 
 	// 日志级别下拉框
 	levelDropdown := tview.NewDropDown().
-		SetLabel(" 级别: ").
+		SetLabel(" " + T("logs.level") + " ").
 		SetFieldBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
-	levelDropdown.AddOption("全部", nil)
+	levelDropdown.AddOption(T("logs.level.all"), nil)
 	levelDropdown.AddOption("DEBUG", nil)
 	levelDropdown.AddOption("INFO", nil)
 	levelDropdown.AddOption("WARNING", nil)
@@ -42,7 +42,7 @@ func NewLogsPage(app *tview.Application) tview.Primitive {
 	levelDropdown.SetCurrentOption(0)
 
 	// 清空按钮
-	clearBtn := tview.NewButton(" 清空 ")
+	clearBtn := tview.NewButton(" " + T("logs.clear") + " ")
 	clearBtn.SetBorder(false)
 
 	// 顶部工具栏
@@ -104,7 +104,7 @@ func NewLogsPage(app *tview.Application) tview.Primitive {
 
 	// 级别切换
 	levelDropdown.SetSelectedFunc(func(text string, index int) {
-		if text == "全部" {
+		if index == 0 {
 			currentLevel = ""
 		} else {
 			currentLevel = text

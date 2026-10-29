@@ -47,13 +47,13 @@ func NewProxyPage(app *tview.Application) tview.Primitive {
 
 	// 顶部工具栏：代理组下拉框 + 测试延迟 + 刷新
 	groupDropdown := tview.NewDropDown().
-		SetLabel(" 代理组: ").
+		SetLabel(" " + T("proxy.group")).
 		SetFieldBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
 
-	testBtn := tview.NewButton(" 测试延迟 ")
+	testBtn := tview.NewButton(" " + T("proxy.test_delay") + " ")
 	testBtn.SetBorder(false)
 
-	refreshBtn := tview.NewButton(" 刷新 ")
+	refreshBtn := tview.NewButton(" " + T("common.refresh") + " ")
 	refreshBtn.SetBorder(false)
 
 	toolbar := tview.NewFlex().
@@ -116,7 +116,7 @@ func NewProxyPage(app *tview.Application) tview.Primitive {
 			pageInfo.SetText(" 1 / 1 ")
 			empty := tview.NewTextView().
 				SetTextAlign(tview.AlignCenter).
-				SetText("\n暂无节点")
+				SetText("\n" + T("proxy.empty"))
 			nodesFlex.AddItem(empty, 0, 1, false)
 			return
 		}
@@ -273,7 +273,7 @@ func NewProxyPage(app *tview.Application) tview.Primitive {
 		// 正在测试时点击 = 中断：把「测试中」收尾为超时。
 		if isTesting.Load() {
 			isTesting.Store(false)
-			testBtn.SetLabel(" 测试延迟 ")
+			testBtn.SetLabel(" " + T("proxy.test_delay") + " ")
 			state.resolveTesting(groupName, mihomotui.DelayTimeout)
 			render(false)
 			return
@@ -282,7 +282,7 @@ func NewProxyPage(app *tview.Application) tview.Primitive {
 			return // 有单节点测试在进行，避免状态互相干扰
 		}
 		isTesting.Store(true)
-		testBtn.SetLabel(" 中断测试 ")
+		testBtn.SetLabel(" " + T("proxy.stop_test") + " ")
 		state.markGroupTesting(groupName)
 		render(false)
 
@@ -291,7 +291,7 @@ func NewProxyPage(app *tview.Application) tview.Primitive {
 				app.QueueUpdateDraw(func() {
 					// 用户可能已经中断并重新开始测试，此时不要把按钮改回默认。
 					if !isTesting.Load() {
-						testBtn.SetLabel(" 测试延迟 ")
+						testBtn.SetLabel(" " + T("proxy.test_delay") + " ")
 					}
 				})
 			}()
@@ -573,7 +573,7 @@ func createProxyCard(node mihomotui.ProxyNode, selected bool, nameWidth int, onC
 		SetWrap(false)
 
 	// 单独测试按钮
-	testBtn := tview.NewButton("测")
+	testBtn := tview.NewButton(T("proxy.test"))
 	testBtn.SetBorder(false)
 	testBtn.SetSelectedFunc(onTest)
 

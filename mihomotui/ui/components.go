@@ -93,7 +93,7 @@ func ShowModal(app *tview.Application, pages *tview.Pages, title, message string
 
 // ShowConfirmModal 显示确认弹窗（确认/取消）
 func ShowConfirmModal(app *tview.Application, pages *tview.Pages, title, message string, onConfirm func()) {
-	ShowModal(app, pages, title, message, []string{"确认", "取消"}, func(buttonIndex int, _ string) {
+	ShowModal(app, pages, title, message, []string{T("common.confirm"), T("common.cancel")}, func(buttonIndex int, _ string) {
 		if buttonIndex == 0 && onConfirm != nil {
 			onConfirm()
 		}
@@ -102,7 +102,7 @@ func ShowConfirmModal(app *tview.Application, pages *tview.Pages, title, message
 
 // ShowAlertModal 显示提示弹窗（仅确认按钮）
 func ShowAlertModal(app *tview.Application, pages *tview.Pages, title, message string) {
-	ShowModal(app, pages, title, message, []string{"确认"}, nil)
+	ShowModal(app, pages, title, message, []string{T("common.confirm")}, nil)
 }
 
 // NewPaginationBar 创建分页控制栏（上一页 / 页码 / 下一页）

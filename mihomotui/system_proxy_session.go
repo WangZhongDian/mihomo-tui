@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"mihomotui/mihomotui/i18n"
 	"os"
 	"os/exec"
 	"runtime"
@@ -102,9 +103,7 @@ func ClearSystemProxyFromSession() error {
 // 当前终端已经通过 SyncSystemProxySession 注入，但用户已打开的其他 shell
 // 只能靠 source 或重新打开——开启时块里有 export，source 是有效的。
 func SystemProxySessionHint() string {
-	return "已写入 ~/.bashrc、~/.zshrc、~/.profile，并同步到当前桌面会话。\n\n" +
-		"• 本终端及其他已打开的终端：执行 source ~/.bashrc（或 source ~/.zshrc）\n" +
-		"• 新打开的终端 / 桌面应用：自动生效"
+	return i18n.T("system_proxy.session_hint")
 }
 
 // SystemProxyClearHint 返回关闭系统代理后给用户的提示文案。
@@ -113,11 +112,7 @@ func SystemProxySessionHint() string {
 // source 只会重新执行剩余内容，旧变量原样留在已运行的 shell 里。
 // 必须显式 unset，或开一个不带这些变量的新会话。
 func SystemProxyClearHint() string {
-	return "已删除 shell 配置文件中的代理块，并清理当前进程与用户会话变量。\n\n" +
-		"已打开的终端仍持有旧变量（Unix 限制：进程无法修改其他已运行 shell 的环境），\n" +
-		"请在其中执行：\n" +
-		"  unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy\n\n" +
-		"或直接重开终端（no_proxy 建议保留，本机回环不走代理）。"
+	return i18n.T("system_proxy.clear_hint")
 }
 
 // systemProxyEnvVars 生成代理环境变量表（与 shell 注入块内容保持一致）。

@@ -29,8 +29,8 @@ func NewResourcePage(app *tview.Application) tview.Primitive {
 			app.SetFocus(target)
 		}
 	}
-	kernelBtn := tview.NewButton(" 内核管理 ").SetSelectedFunc(func() { show("kernel") })
-	externalBtn := tview.NewButton(" 外部资源 ").SetSelectedFunc(func() { show("external") })
+	kernelBtn := tview.NewButton(" " + T("resources.kernel.tab") + " ").SetSelectedFunc(func() { show("kernel") })
+	externalBtn := tview.NewButton(" " + T("resources.external.tab") + " ").SetSelectedFunc(func() { show("external") })
 	tabs := tview.NewFlex().AddItem(kernelBtn, 0, 1, true).AddItem(externalBtn, 0, 1, false)
 	return tview.NewFlex().SetDirection(tview.FlexRow).AddItem(tabs, 1, 0, true).AddItem(pages, 0, 1, true)
 }
@@ -38,12 +38,12 @@ func NewResourcePage(app *tview.Application) tview.Primitive {
 func newKernelResourceView(app *tview.Application) tview.Primitive {
 	modalHost := tview.NewPages()
 	table := tview.NewTable().SetSelectable(true, true).SetFixed(1, 0)
-	table.SetBorder(true).SetTitle(" mihomo 内核版本（选择右侧操作执行） ")
+	table.SetBorder(true).SetTitle(" " + T("resources.kernel.versions_title") + " ")
 	meta := tview.NewTextView().SetDynamicColors(true)
 	status := tview.NewTextView().SetDynamicColors(true)
-	refresh := tview.NewButton(" 刷新版本列表 ")
-	latest := tview.NewButton(" 更新到最新稳定版 ")
-	manualImport := tview.NewButton(" 扫描手动放置内核 ")
+	refresh := tview.NewButton(" " + T("resources.kernel.refresh_versions") + " ")
+	latest := tview.NewButton(" " + T("resources.kernel.update_latest") + " ")
+	manualImport := tview.NewButton(" " + T("resources.kernel.scan_manual") + " ")
 	var versions []mihomotui.MihomoVersionInfo
 	var canManage bool
 	var manualPath string
@@ -66,15 +66,15 @@ func newKernelResourceView(app *tview.Application) tview.Primitive {
 		if path == "" {
 			path = mihomotui.ManualMihomoImportPath()
 		}
-		text := "[red::b]内核操作失败[-]\n" + cause.Error() + "\n\n"
+		text := "[red::b]" + T("resources.kernel.operation_failed") + "[-]\n" + cause.Error() + "\n\n"
 		if version != "" {
-			text += "目标版本：v" + version + "\n"
+			text += Tf("resources.kernel.target_version", map[string]any{"Version": version}) + "\n"
 		}
 		if downloadURL != "" {
-			text += "可手动下载地址：" + mihomotui.RedactURL(downloadURL) + "\n"
+			text += Tf("resources.kernel.manual_download_url", map[string]any{"URL": mihomotui.RedactURL(downloadURL)}) + "\n"
 		}
-		text += "请下载已解压的 mihomo 可执行文件，放置为：\n" + path + "\n\n要求：普通文件、非符号链接、可执行；扫描时将收紧权限并验证实际版本。"
-		modal := tview.NewModal().SetText(text).AddButtons([]string{"扫描本地文件", "关闭"})
+		text += Tf("resources.kernel.manual_help", map[string]any{"Path": path})
+		modal := tview.NewModal().SetText(text).AddButtons([]string{T("resources.scan_local"), T("common.close")})
 		modal.SetDoneFunc(func(index int, _ string) {
 			modalHost.RemovePage("kernel-manual-help")
 			app.SetFocus(table)
@@ -91,10 +91,10 @@ func newKernelResourceView(app *tview.Application) tview.Primitive {
 				app.QueueUpdateDraw(func() {
 					busy = false
 					if err != nil {
-						setStatus(" [red]●[-] 扫描手动内核失败: " + err.Error())
+						setStatus(" [red]●[-] " + Tf("resources.kernel.scan_manual_failed", map[string]any{"Error": err.Error()}))
 						showManualHelp(version, downloadURL, err)
 					} else {
-						setStatus(" [green]●[-] 已导入手动内核 v" + imported.Version)
+						setStatus(" [green]●[-] " + Tf("resources.kernel.manual_imported", map[string]any{"Version": imported.Version}))
 						load()
 					}
 				})
@@ -116,15 +116,15 @@ func newKernelResourceView(app *tview.Application) tview.Primitive {
 					break
 				}
 				app.QueueUpdateDraw(func() {
-					text := fmt.Sprintf("[yellow::b]下载 %d%%[-]", p.Percent)
+					text := "[yellow::b]" + Tf("resources.kernel.download_percent", map[string]any{"Percent": p.Percent}) + "[-]"
 					if p.TotalBytes <= 0 && p.DownloadedBytes > 0 {
-						text = "[yellow::b]已下载 " + mihomotui.FormatSize(p.DownloadedBytes) + "[-]"
+						text = "[yellow::b]" + Tf("resources.kernel.downloaded_size", map[string]any{"Size": mihomotui.FormatSize(p.DownloadedBytes)}) + "[-]"
 					}
 					if p.Status == "extracting" {
-						text = "[yellow::b]正在解压[-]"
+						text = "[yellow::b]" + T("resources.kernel.extracting") + "[-]"
 					}
 					if p.Status == "done" {
-						text = "[green::b]已下载[-]"
+						text = "[green::b]" + T("resources.kernel.downloaded") + "[-]"
 					}
 					table.SetCell(row, 3, tview.NewTableCell(text))
 					setStatus(" [yellow]●[-] " + p.Message)
@@ -143,13 +143,13 @@ func newKernelResourceView(app *tview.Application) tview.Primitive {
 			app.QueueUpdateDraw(func() {
 				busy = false
 				if err != nil {
-					setStatus(" [red]●[-] 操作失败: " + err.Error())
+					setStatus(" [red]●[-] " + Tf("resources.operation_failed", map[string]any{"Error": err.Error()}))
 					showManualHelp(version, assetURL(version), err)
 				} else if activate {
-					setStatus(" [green]●[-] 已切换到 v" + version)
+					setStatus(" [green]●[-] " + Tf("resources.kernel.switched", map[string]any{"Version": version}))
 					load()
 				} else {
-					setStatus(" [green]●[-] 已下载 v" + version + "，请点击“切换”启用")
+					setStatus(" [green]●[-] " + Tf("resources.kernel.download_activate", map[string]any{"Version": version}))
 					load()
 				}
 			})
@@ -160,7 +160,7 @@ func newKernelResourceView(app *tview.Application) tview.Primitive {
 		go func() {
 			client, err := mihomotui.GetIPCClient()
 			if err != nil {
-				app.QueueUpdateDraw(func() { setStatus(" [red]●[-] IPC 连接失败: " + err.Error()) })
+				app.QueueUpdateDraw(func() { setStatus(" [red]●[-] " + Tf("resources.ipc_failed", map[string]any{"Error": err.Error()})) })
 				return
 			}
 			info, infoErr := client.IPCGetDaemonInfo()
@@ -173,42 +173,42 @@ func newKernelResourceView(app *tview.Application) tview.Primitive {
 					manualImport.SetDisabled(!canManage)
 				}
 				table.Clear()
-				for col, text := range []string{"版本", "发布日期", "状态", "操作", "删除"} {
+				for col, text := range []string{T("resources.kernel.column.version"), T("resources.kernel.column.published"), T("resources.kernel.column.status"), T("resources.kernel.column.action"), T("common.delete")} {
 					table.SetCell(0, col, tview.NewTableCell("[::b]"+text).SetSelectable(false))
 				}
 				if err != nil {
-					setStatus(" [red]●[-] 读取版本失败: " + err.Error())
+					setStatus(" [red]●[-] " + Tf("resources.kernel.read_failed", map[string]any{"Error": err.Error()}))
 					return
 				}
 				versions = result.Versions
 				manualPath = result.ManualImportPath
-				meta.SetText(fmt.Sprintf("来源：%s  缓存检查：%s\n手动内核放置路径：%s%s", result.Source, result.CheckedAt, manualPath, func() string {
+				meta.SetText(Tf("resources.kernel.meta", map[string]any{"Source": result.Source, "CheckedAt": result.CheckedAt, "Path": manualPath, "LastError": func() string {
 					if result.LastError != "" {
-						return "\n[yellow]最近刷新失败：[-]" + result.LastError
+						return "\n[yellow]" + T("resources.kernel.last_refresh_failed") + "[-]" + result.LastError
 					}
 					return ""
-				}()))
+				}()}))
 				for i, v := range versions {
 					row := i + 1
-					state := "未下载"
-					action := "[::b]下载"
+					state := T("resources.kernel.not_downloaded")
+					action := "[::b]" + T("resources.kernel.download")
 					remove := ""
 					if v.Active {
-						state = "[green]正在使用[-]"
+						state = "[green]" + T("resources.kernel.in_use") + "[-]"
 						action = "[gray]—[-]"
 					} else if v.Downloaded {
-						state = "[blue]已下载[-]"
-						action = "[::b]切换"
-						remove = "[red::b]删除[-]"
+						state = "[blue]" + T("resources.kernel.downloaded") + "[-]"
+						action = "[::b]" + T("resources.kernel.activate")
+						remove = "[red::b]" + T("common.delete") + "[-]"
 					}
 					if v.Prerelease {
-						state += " · 预发布"
+						state += " · " + T("resources.kernel.prerelease")
 					}
 					if v.Manual {
-						state += " · 手动导入"
+						state += " · " + T("resources.kernel.manual")
 					}
 					if !canManage && !v.Active {
-						action = "[gray]仅 root 可操作[-]"
+						action = "[gray]" + T("resources.kernel.root_only") + "[-]"
 						remove = ""
 					}
 					table.SetCell(row, 0, tview.NewTableCell("v"+v.Version))
@@ -233,13 +233,13 @@ func newKernelResourceView(app *tview.Application) tview.Primitive {
 			return
 		}
 		if !canManage {
-			setStatus(" [yellow]●[-] 当前身份仅可查看；内核操作需要 root")
+			setStatus(" [yellow]●[-] " + T("resources.kernel.view_only"))
 			return
 		}
 		v := versions[row-1]
 		client, err := mihomotui.GetIPCClient()
 		if err != nil {
-			setStatus(" [red]●[-] IPC 连接失败: " + err.Error())
+			setStatus(" [red]●[-] " + Tf("resources.ipc_failed", map[string]any{"Error": err.Error()}))
 			return
 		}
 		switch col {
@@ -254,18 +254,18 @@ func newKernelResourceView(app *tview.Application) tview.Primitive {
 					app.QueueUpdateDraw(func() {
 						busy = false
 						if err != nil {
-							setStatus(" [red]●[-] 切换失败: " + err.Error())
+							setStatus(" [red]●[-] " + Tf("resources.kernel.activate_failed", map[string]any{"Error": err.Error()}))
 						} else {
-							setStatus(" [green]●[-] 已切换到 v" + v.Version)
+							setStatus(" [green]●[-] " + Tf("resources.kernel.switched", map[string]any{"Version": v.Version}))
 						}
 						load()
 					})
 				}()
 			} else {
-				table.SetCell(row, 3, tview.NewTableCell("[yellow::b]下载 0%[-]"))
+				table.SetCell(row, 3, tview.NewTableCell("[yellow::b]"+Tf("resources.kernel.download_percent", map[string]any{"Percent": 0})+"[-]"))
 				if err := client.IPCDownloadMihomoVersion(v.Version); err != nil {
 					busy = false
-					setStatus(" [red]●[-] 下载失败: " + err.Error())
+					setStatus(" [red]●[-] " + Tf("resources.kernel.download_failed", map[string]any{"Error": err.Error()}))
 					showManualHelp(v.Version, v.AssetURL, err)
 					return
 				}
@@ -275,7 +275,7 @@ func newKernelResourceView(app *tview.Application) tview.Primitive {
 			if !v.Downloaded || v.Active {
 				return
 			}
-			confirm := tview.NewModal().SetText("彻底删除 v" + v.Version + "？此操作无法撤销。").AddButtons([]string{"删除", "取消"})
+			confirm := tview.NewModal().SetText(Tf("resources.kernel.delete_confirm", map[string]any{"Version": v.Version})).AddButtons([]string{T("common.delete"), T("common.cancel")})
 			confirm.SetDoneFunc(func(i int, _ string) {
 				modalHost.RemovePage("kernel-delete-confirm")
 				app.SetFocus(table)
@@ -288,9 +288,9 @@ func newKernelResourceView(app *tview.Application) tview.Primitive {
 					app.QueueUpdateDraw(func() {
 						busy = false
 						if err != nil {
-							setStatus(" [red]●[-] 删除失败: " + err.Error())
+							setStatus(" [red]●[-] " + Tf("resources.delete_failed", map[string]any{"Error": err.Error()}))
 						} else {
-							setStatus(" [green]●[-] 已删除 v" + v.Version)
+							setStatus(" [green]●[-] " + Tf("resources.kernel.deleted", map[string]any{"Version": v.Version}))
 						}
 						load()
 					})
@@ -315,7 +315,7 @@ func newKernelResourceView(app *tview.Application) tview.Primitive {
 			app.QueueUpdateDraw(func() {
 				busy = false
 				if err != nil {
-					setStatus(" [red]●[-] 刷新失败: " + err.Error())
+					setStatus(" [red]●[-] " + Tf("resources.refresh_failed", map[string]any{"Error": err.Error()}))
 					showManualHelp("", "", err)
 				}
 				load()
@@ -333,10 +333,10 @@ func newKernelResourceView(app *tview.Application) tview.Primitive {
 				return
 			}
 		}
-		setStatus(" [yellow]●[-] 请先刷新版本列表")
+		setStatus(" [yellow]●[-] " + T("resources.kernel.refresh_first"))
 	})
 	manualImport.SetSelectedFunc(func() {
-		showManualHelp("", "", fmt.Errorf("请先将已解压的 mihomo 可执行文件放置到指定路径，再扫描"))
+		showManualHelp("", "", fmt.Errorf("%s", T("resources.kernel.manual_scan_hint")))
 	})
 	buttons := tview.NewFlex().AddItem(refresh, 0, 1, true).AddItem(latest, 0, 1, false).AddItem(manualImport, 0, 1, false)
 	root := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(meta, 3, 0, false).AddItem(table, 0, 1, true).AddItem(status, 1, 0, false).AddItem(buttons, 1, 0, false)
@@ -353,9 +353,9 @@ func newExternalResourceView(app *tview.Application) tview.Primitive {
 	// Each resource therefore uses a compact card: status, full-width URL, then
 	// a separate action row. The URL field always owns an entire line.
 	content := tview.NewFlex().SetDirection(tview.FlexRow)
-	content.SetBorder(true).SetTitle(" 外部资源 ")
+	content.SetBorder(true).SetTitle(" " + T("resources.external.tab") + " ")
 	status := tview.NewTextView().SetDynamicColors(true)
-	refresh := tview.NewButton(" 刷新状态 ")
+	refresh := tview.NewButton(" " + T("resources.external.refresh_status") + " ")
 	inputs := map[string]*tview.InputField{}
 	stateViews := map[string]*tview.TextView{}
 	pathViews := map[string]*tview.TextView{}
@@ -381,16 +381,16 @@ func newExternalResourceView(app *tview.Application) tview.Primitive {
 		}
 		stateViews[key] = tview.NewTextView().SetDynamicColors(true).SetWrap(false)
 		pathViews[key] = tview.NewTextView().SetDynamicColors(true).SetWrap(true)
-		inputs[key] = tview.NewInputField().SetLabel("下载 URL: ").SetFieldWidth(0)
+		inputs[key] = tview.NewInputField().SetLabel(T("resources.external.download_url") + ": ").SetFieldWidth(0)
 		inputs[key].SetChangedFunc(func(_ string) {
 			if !syncingURLs {
 				dirtyURLs[key] = true
 			}
 		})
-		saveButtons[key] = tview.NewButton(" 保存 URL ")
-		updateButtons[key] = tview.NewButton(" 强制更新 ")
-		scanButtons[key] = tview.NewButton(" 扫描本地文件 ")
-		resetButtons[key] = tview.NewButton(" 恢复默认 URL ")
+		saveButtons[key] = tview.NewButton(" " + T("resources.external.save_url") + " ")
+		updateButtons[key] = tview.NewButton(" " + T("resources.external.force_update") + " ")
+		scanButtons[key] = tview.NewButton(" " + T("resources.scan_local") + " ")
+		resetButtons[key] = tview.NewButton(" " + T("resources.external.restore_url") + " ")
 
 		header := tview.NewTextView().SetDynamicColors(true).SetText("[::b]" + name + "[-]  ")
 		header.SetBorderPadding(0, 0, 1, 0)
@@ -425,11 +425,11 @@ func newExternalResourceView(app *tview.Application) tview.Primitive {
 		if !ok {
 			return
 		}
-		text := "[red::b]" + info.Name + " 更新/验证失败[-]\n" + cause.Error() + "\n\n"
-		text += "下载地址：" + mihomotui.RedactURL(info.URL) + "\n"
-		text += "请手动下载 " + info.Name + " 文件并放置为：\n" + info.Path + "\n\n"
-		text += "文件名必须保持为 " + filepath.Base(info.Path) + "；要求为非空普通文件、非符号链接，且不能允许组/其他用户写入。"
-		modal := tview.NewModal().SetText(text).AddButtons([]string{"扫描本地文件", "关闭"})
+		text := "[red::b]" + Tf("resources.external.validation_failed", map[string]any{"Name": info.Name}) + "[-]\n" + cause.Error() + "\n\n"
+		text += Tf("resources.external.download_address", map[string]any{"URL": mihomotui.RedactURL(info.URL)}) + "\n"
+		text += Tf("resources.external.manual_download", map[string]any{"Name": info.Name, "Path": info.Path}) + "\n\n"
+		text += Tf("resources.external.manual_requirements", map[string]any{"Filename": filepath.Base(info.Path)})
+		modal := tview.NewModal().SetText(text).AddButtons([]string{T("resources.scan_local"), T("common.close")})
 		modal.SetDoneFunc(func(index int, _ string) {
 			modalHost.RemovePage("external-manual-help")
 			app.SetFocus(inputs[key])
@@ -445,10 +445,10 @@ func newExternalResourceView(app *tview.Application) tview.Primitive {
 				app.QueueUpdateDraw(func() {
 					busy[key] = false
 					if err != nil {
-						status.SetText(" [red]●[-] 扫描失败: " + err.Error())
+						status.SetText(" [red]●[-] " + Tf("resources.external.scan_failed", map[string]any{"Error": err.Error()}))
 						showManualHelp(key, err)
 					} else {
-						status.SetText(" [green]●[-] " + info.Name + " 手动文件已识别")
+						status.SetText(" [green]●[-] " + Tf("resources.external.manual_recognized", map[string]any{"Name": info.Name}))
 						load()
 					}
 				})
@@ -463,7 +463,9 @@ func newExternalResourceView(app *tview.Application) tview.Primitive {
 		go func() {
 			client, err := mihomotui.GetIPCClient()
 			if err != nil {
-				app.QueueUpdateDraw(func() { status.SetText(" [red]●[-] IPC 连接失败: " + err.Error()) })
+				app.QueueUpdateDraw(func() {
+					status.SetText(" [red]●[-] " + Tf("resources.ipc_failed", map[string]any{"Error": err.Error()}))
+				})
 				return
 			}
 			info, infoErr := client.IPCGetDaemonInfo()
@@ -477,29 +479,29 @@ func newExternalResourceView(app *tview.Application) tview.Primitive {
 					resetButtons[key].SetDisabled(!canManage || busy[key])
 				}
 				if listErr != nil {
-					status.SetText(" [red]●[-] 读取资源状态失败: " + listErr.Error())
+					status.SetText(" [red]●[-] " + Tf("resources.external.read_failed", map[string]any{"Error": listErr.Error()}))
 					return
 				}
 				resources = map[string]mihomotui.ExternalResourceInfo{}
 				for _, resource := range list {
 					resources[resource.Key] = resource
-					state := "[red]缺失[-]"
+					state := "[red]" + T("resources.external.missing") + "[-]"
 					if resource.Valid {
-						state = "[green]可用[-] " + mihomotui.FormatSize(resource.Size)
+						state = "[green]" + T("resources.external.available") + "[-] " + mihomotui.FormatSize(resource.Size)
 					} else if resource.Exists {
-						state = "[yellow]文件无效[-]"
+						state = "[yellow]" + T("resources.external.invalid") + "[-]"
 					}
 					if !resource.ModTime.IsZero() {
-						state += "  [gray]最近下载/更新：[-]" + resource.ModTime.Local().Format("2006-01-02 15:04:05")
+						state += "  [gray]" + T("resources.external.last_updated") + "[-]" + resource.ModTime.Local().Format("2006-01-02 15:04:05")
 					}
 					if resource.LastError != "" {
-						state += "\n[yellow]最近问题：[-]" + resource.LastError
+						state += "\n[yellow]" + T("resources.external.last_issue") + "[-]" + resource.LastError
 					}
 					if view := stateViews[resource.Key]; view != nil {
 						view.SetText(state)
 					}
 					if view := pathViews[resource.Key]; view != nil {
-						view.SetText("[gray]本地：[-]" + resource.Path)
+						view.SetText("[gray]" + T("resources.external.local_path") + "[-]" + resource.Path)
 					}
 					// Always hydrate a clean input, including the initially focused
 					// GeoIP field. Only retain text when the user has an unsaved edit.
@@ -529,9 +531,9 @@ func newExternalResourceView(app *tview.Application) tview.Primitive {
 				app.QueueUpdateDraw(func() {
 					busy[key] = false
 					if err != nil {
-						status.SetText(" [red]●[-] 保存 URL 失败: " + err.Error())
+						status.SetText(" [red]●[-] " + Tf("resources.external.save_failed", map[string]any{"Error": err.Error()}))
 					} else {
-						status.SetText(" [green]●[-] 下载 URL 已保存；需要时点击“强制更新”")
+						status.SetText(" [green]●[-] " + T("resources.external.saved"))
 					}
 					load()
 				})
@@ -542,7 +544,7 @@ func newExternalResourceView(app *tview.Application) tview.Primitive {
 				return
 			}
 			busy[key] = true
-			status.SetText(" [yellow]●[-] 正在强制更新 " + key + "...")
+			status.SetText(" [yellow]●[-] " + Tf("resources.external.updating", map[string]any{"Name": key}))
 			go func() {
 				client, err := mihomotui.GetIPCClient()
 				if err == nil {
@@ -551,18 +553,18 @@ func newExternalResourceView(app *tview.Application) tview.Primitive {
 				app.QueueUpdateDraw(func() {
 					busy[key] = false
 					if err != nil {
-						status.SetText(" [red]●[-] 更新失败: " + err.Error())
+						status.SetText(" [red]●[-] " + Tf("resources.external.update_failed", map[string]any{"Error": err.Error()}))
 						load()
 						showManualHelp(key, err)
 						return
 					}
-					status.SetText(" [green]●[-] 资源已强制更新")
+					status.SetText(" [green]●[-] " + T("resources.external.updated"))
 					load()
 				})
 			}()
 		})
 		scanButtons[key].SetSelectedFunc(func() {
-			showManualHelp(key, fmt.Errorf("请先将手动下载的文件放置到指定路径，再扫描"))
+			showManualHelp(key, fmt.Errorf("%s", T("resources.external.manual_scan_hint")))
 		})
 		resetButtons[key].SetSelectedFunc(func() {
 			if !canManage || busy[key] {
@@ -575,8 +577,8 @@ func newExternalResourceView(app *tview.Application) tview.Primitive {
 				resourceName = "GeoSite"
 			}
 			confirm := tview.NewModal().
-				SetText("恢复 " + resourceName + " 的默认下载 URL？\n不会立即下载或覆盖当前本地资源。").
-				AddButtons([]string{"恢复默认", "取消"})
+				SetText(Tf("resources.external.restore_confirm", map[string]any{"Name": resourceName})).
+				AddButtons([]string{T("resources.external.restore_default"), T("common.cancel")})
 			confirm.SetDoneFunc(func(index int, _ string) {
 				modalHost.RemovePage("external-reset-url-confirm")
 				app.SetFocus(inputs[key])
@@ -592,13 +594,13 @@ func newExternalResourceView(app *tview.Application) tview.Primitive {
 					app.QueueUpdateDraw(func() {
 						busy[key] = false
 						if err != nil {
-							status.SetText(" [red]●[-] 恢复默认 URL 失败: " + err.Error())
+							status.SetText(" [red]●[-] " + Tf("resources.external.restore_failed", map[string]any{"Error": err.Error()}))
 						} else {
 							dirtyURLs[key] = false
 							syncingURLs = true
 							inputs[key].SetText(defaultURL)
 							syncingURLs = false
-							status.SetText(" [green]●[-] " + resourceName + " 已恢复默认下载 URL；需要时点击“强制更新”")
+							status.SetText(" [green]●[-] " + Tf("resources.external.restored", map[string]any{"Name": resourceName}))
 						}
 						load()
 					})

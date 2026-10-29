@@ -42,7 +42,7 @@ func NewConnectionsPage(app *tview.Application) tview.Primitive {
 		SetText("")
 
 	// 关闭全部按钮
-	closeAllBtn := tview.NewButton(" 关闭全部 ")
+	closeAllBtn := tview.NewButton(" " + T("connections.close_all") + " ")
 	closeAllBtn.SetBorder(false)
 	closeAllBtn.SetSelectedFunc(func() {
 		go func() {
@@ -60,14 +60,14 @@ func NewConnectionsPage(app *tview.Application) tview.Primitive {
 		AddItem(closeAllBtn, 12, 0, true)
 
 	// Tab 切换：活跃 / 已关闭
-	activeBtn := tview.NewButton(" 活跃 ")
+	activeBtn := tview.NewButton(" " + T("connections.active") + " ")
 	activeBtn.SetBorder(false)
-	closedBtn := tview.NewButton(" 已关闭 ")
+	closedBtn := tview.NewButton(" " + T("connections.closed") + " ")
 	closedBtn.SetBorder(false)
 
 	// 过滤输入框
 	inputField := tview.NewInputField().
-		SetPlaceholder(" 过滤条件").
+		SetPlaceholder(" " + T("connections.filter")).
 		SetFieldBackgroundColor(tview.Styles.PrimitiveBackgroundColor)
 	inputField.SetBorder(true)
 
@@ -96,13 +96,10 @@ func NewConnectionsPage(app *tview.Application) tview.Primitive {
 				totalUp += c.Upload
 			}
 		}
-		statsText.SetText(fmt.Sprintf(
-			" [%s]●[-] %d 活跃  |  下载: %s  |  上传: %s",
-			mihomotui.ColorWarn,
-			activeCount,
-			formatSize(totalDown),
-			formatSize(totalUp),
-		))
+		statsText.SetText(Tf("connections.stats", map[string]any{
+			"Color": mihomotui.ColorWarn, "Count": activeCount,
+			"Download": formatSize(totalDown), "Upload": formatSize(totalUp),
+		}))
 	}
 
 	// 刷新表格
@@ -111,7 +108,10 @@ func NewConnectionsPage(app *tview.Application) tview.Primitive {
 		table.Clear()
 
 		// 表头
-		headers := []string{"主机", "下载", "上传", "下载速度", "上传速度", "链路"}
+		headers := []string{
+			T("connections.header.host"), T("connections.header.download"), T("connections.header.upload"),
+			T("connections.header.download_speed"), T("connections.header.upload_speed"), T("connections.header.chain"),
+		}
 		for i, h := range headers {
 			cell := tview.NewTableCell("[::b] " + h + " ").
 				SetTextColor(tview.Styles.SecondaryTextColor).
